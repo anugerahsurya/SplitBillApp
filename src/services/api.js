@@ -1,5 +1,5 @@
 // PENTING: Ganti URL ini dengan URL Web App Google Apps Script yang Anda deploy
-export const GAS_WEB_APP_URL = https://script.google.com/macros/s/AKfycbwOSTpl3Vw-_B8GjfLjXhgVq2T4VgY25U5IOImIW1KCGUFHD_zbHZGEcrTK2EnPM_xF/exec';
+export const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxXqr4tMQ7crK1shuNKJzFKR5KTEEN8VsAEiOd0I7ws6dJruGTrCxsv0kTjF3pnQuJY/exec";
 
 export const api = {
   async getActivity(id) {
@@ -100,7 +100,8 @@ export const api = {
         transaction_id: data.transaction_id,
         paid_by_member_id: data.paid_by_member_id,
         amount: data.amount,
-        involved_member_ids: data.involved_member_ids
+        involved_member_ids: data.involved_member_ids,
+        item_name: data.item_name
       }),
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }
     });

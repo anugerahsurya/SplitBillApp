@@ -38,12 +38,22 @@ function sheetToObjectArray(sheet) {
   const headers = data[0];
   const result = [];
   
+  let itemNameIndex = headers.indexOf('item_name');
+  if (sheet.getName() === 'Transactions' && itemNameIndex === -1) {
+    itemNameIndex = 6; // Assume column G
+  }
+  
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const obj = {};
     headers.forEach((header, index) => {
       obj[header] = row[index];
     });
+    
+    if (sheet.getName() === 'Transactions') {
+      obj['item_name'] = row[itemNameIndex] || '-';
+    }
+    
     result.push(obj);
   }
   
@@ -136,9 +146,10 @@ function doPost(e) {
       const amount = requestBody.amount;
       const involved = requestBody.involved_member_ids; // Array of IDs
       const createdAt = new Date().toISOString();
+      const itemName = requestBody.item_name || '-';
       
       const id = generateId();
-      db.getSheetByName('Transactions').appendRow([id, activityId, paidBy, amount, involved.join(','), createdAt]);
+      db.getSheetByName('Transactions').appendRow([id, activityId, paidBy, amount, involved.join(','), createdAt, itemName]);
       
       return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true, id: id })));
     }
@@ -223,6 +234,7 @@ function doPost(e) {
       const paidBy = requestBody.paid_by_member_id;
       const amount = requestBody.amount;
       const involved = requestBody.involved_member_ids;
+      const itemName = requestBody.item_name || '-';
       
       const sheet = db.getSheetByName('Transactions');
       const data = sheet.getDataRange().getValues();
@@ -232,6 +244,7 @@ function doPost(e) {
           sheet.getRange(i + 1, 3).setValue(paidBy);
           sheet.getRange(i + 1, 4).setValue(amount);
           sheet.getRange(i + 1, 5).setValue(involved.join(','));
+          sheet.getRange(i + 1, 7).setValue(itemName);
           break;
         }
       }

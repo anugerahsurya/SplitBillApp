@@ -14,6 +14,7 @@ const members = ref([]);
 const transactions = ref([]);
 
 // Form State
+const itemName = ref('');
 const paidById = ref('');
 const amount = ref('');
 const involvedMemberIds = ref([]);
@@ -197,6 +198,7 @@ const submitTransaction = async () => {
     if (editingTransactionId.value) {
       res = await api.editTransaction({
         transaction_id: editingTransactionId.value,
+        item_name: itemName.value,
         paid_by_member_id: paidById.value,
         amount: amount.value,
         involved_member_ids: involvedMemberIds.value
@@ -204,6 +206,7 @@ const submitTransaction = async () => {
     } else {
       res = await api.addTransaction({
         activity_id: activityId,
+        item_name: itemName.value,
         paid_by_member_id: paidById.value,
         amount: amount.value,
         involved_member_ids: involvedMemberIds.value
@@ -241,6 +244,7 @@ const deleteTransaction = async (id) => {
 
 const editTransaction = (t) => {
   editingTransactionId.value = t.id;
+  itemName.value = t.item_name && t.item_name !== '-' ? t.item_name : '';
   paidById.value = t.paid_by_member_id;
   amount.value = t.amount;
   involvedMemberIds.value = t.involved_member_ids ? String(t.involved_member_ids).split(',') : [];
@@ -249,6 +253,7 @@ const editTransaction = (t) => {
 
 const cancelEditTransaction = () => {
   editingTransactionId.value = null;
+  itemName.value = '';
   paidById.value = '';
   amount.value = '';
   involvedMemberIds.value = [];
@@ -301,6 +306,11 @@ const copyAccount = (account) => {
         <h3 class="card-title">{{ editingTransactionId ? 'Edit Pengeluaran' : 'Catat Pengeluaran' }}</h3>
         
         <div class="form-group">
+          <label class="form-label">Nama Item / Keperluan</label>
+          <input type="text" v-model="itemName" class="form-control" placeholder="Contoh: Tiket Masuk, Makan Siang">
+        </div>
+
+        <div class="form-group">
           <label class="form-label">Dibayar Oleh</label>
           <select v-model="paidById" class="form-control">
             <option value="" disabled>Pilih Anggota</option>
@@ -351,6 +361,7 @@ const copyAccount = (account) => {
                   {{ members.find(m => String(m.id) === String(t.paid_by_member_id))?.name || 'Unknown' }}
                   membayar
                   <span style="color: var(--danger);">{{ formatCurrency(t.amount) }}</span>
+                  untuk {{ t.item_name || '-' }}
                 </div>
                 <div style="font-size: 0.875rem; color: var(--secondary); margin-top: 0.25rem;">
                   Untuk: 
