@@ -12,7 +12,7 @@ const allActivities = ref([]);
 const isLoadingActivities = ref(false);
 
 const activityName = ref('');
-const members = ref([{ name: '', bank_account: '' }]);
+const members = ref([{ name: '', bank_name: '', bank_account: '' }]);
 const isLoading = ref(false);
 const generatedLink = ref('');
 
@@ -100,7 +100,7 @@ const formatDate = (dateStr) => {
 };
 
 const addMember = () => {
-  members.value.push({ name: '', bank_account: '' });
+  members.value.push({ name: '', bank_name: '', bank_account: '' });
 };
 
 const removeMember = (index) => {
@@ -127,7 +127,7 @@ const createActivity = async () => {
       generatedLink.value = `${baseUrl}/?id=${res.id}`;
       // Reset form
       activityName.value = '';
-      members.value = [{ name: '', bank_account: '' }];
+      members.value = [{ name: '', bank_name: '', bank_account: '' }];
     } else {
       alert("Gagal membuat kegiatan: " + (res.error || "Unknown error"));
     }
@@ -243,6 +243,7 @@ const copyLink = () => {
           <label class="form-label">Daftar Anggota</label>
           <div v-for="(member, index) in members" :key="index" class="member-row mb-2">
             <input type="text" v-model="member.name" class="form-control" placeholder="Nama Anggota" style="flex: 1;">
+            <input type="text" v-model="member.bank_name" class="form-control" placeholder="Bank/E-Wallet" style="flex: 1;">
             <input type="text" v-model="member.bank_account" class="form-control" placeholder="No Rekening (Opsional)" style="flex: 1;">
             <button @click="removeMember(index)" class="btn btn-secondary" style="padding: 0.5rem 1rem;" v-if="members.length > 1">
               <Trash2 :size="16" /> Hapus

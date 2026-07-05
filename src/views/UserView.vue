@@ -158,6 +158,7 @@ const settlements = computed(() => {
         from: debtorObj.name,
         to: creditorObj.name,
         amount: minAmount,
+        bankName: creditorObj.bank_name,
         bankAccount: creditorObj.bank_account
       });
     }
@@ -412,7 +413,10 @@ const copyAccount = (account) => {
             </div>
             
             <div v-if="s.bankAccount" class="settlement-action">
-              <div class="account-badge">{{ s.bankAccount }}</div>
+              <div class="account-badge">
+                <span v-if="s.bankName" style="font-weight: 700; margin-right: 0.5rem;">{{ s.bankName }}</span>
+                {{ s.bankAccount }}
+              </div>
               <button class="btn btn-secondary btn-sm" @click="copyAccount(s.bankAccount)">
                 <Copy :size="14" /> Copy
               </button>

@@ -20,7 +20,7 @@ function setup() {
   
   const membersSheet = db.getSheetByName('Members');
   if (membersSheet.getLastRow() === 0) {
-    membersSheet.appendRow(['id', 'activity_id', 'name', 'bank_account']);
+    membersSheet.appendRow(['id', 'activity_id', 'name', 'bank_account', 'bank_name']);
   }
   
   const transactionsSheet = db.getSheetByName('Transactions');
@@ -124,7 +124,7 @@ function doPost(e) {
       
       const membersSheet = db.getSheetByName('Members');
       members.forEach(member => {
-        membersSheet.appendRow([generateId(), id, member.name, member.bank_account || '']);
+        membersSheet.appendRow([generateId(), id, member.name, member.bank_account || '', member.bank_name || '']);
       });
       
       return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true, id: id })));
