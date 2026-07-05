@@ -284,8 +284,8 @@ const copyLink = () => {
         </div>
         <div v-else class="activities-list">
           <div v-for="act in allActivities" :key="act.id" class="activity-item mb-3 p-4" style="border: 1px solid var(--border); border-radius: var(--radius); background: var(--card);">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-              <div style="flex: 1; padding-right: 1rem;">
+            <div class="activity-header">
+              <div style="flex: 1;">
                 <div v-if="editingActivityId === act.id" style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
                   <input type="text" v-model="editActivityName" class="form-control" style="flex: 1; padding: 0.25rem 0.5rem; font-size: 1rem;">
                   <button @click="saveEdit" class="btn btn-primary btn-sm">Simpan</button>
@@ -302,7 +302,7 @@ const copyLink = () => {
                   </span>
                 </div>
               </div>
-              <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end;">
+              <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: stretch; margin-top: 1rem;" class="activity-actions">
                 <button @click="copyActivityLink(act.id)" class="btn btn-secondary btn-sm" title="Copy Link">
                   <Copy :size="16" /> Copy Link
                 </button>
@@ -329,8 +329,8 @@ const copyLink = () => {
               
               <div v-if="isLoadingMembers" class="text-center py-2 text-secondary">Memuat anggota...</div>
               <div v-else>
-                <div v-for="(member, index) in membersToManage" :key="member.id || index" class="mb-2" style="display: flex; gap: 0.5rem; align-items: center;">
-                  <input type="text" v-model="member.name" class="form-control" placeholder="Nama" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                <div v-for="(member, index) in membersToManage" :key="member.id || index" class="mb-3 manage-member-row">
+                  <input type="text" v-model="member.name" class="form-control" placeholder="Nama" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
                   <input type="text" v-model="member.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
                   <input type="text" v-model="member.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
                   <button @click="saveMember(member)" class="btn btn-primary btn-sm" title="Simpan">
@@ -341,10 +341,10 @@ const copyLink = () => {
                   </button>
                 </div>
                 
-                <div class="mt-3" style="display: flex; gap: 0.5rem; align-items: center; border-top: 1px dashed var(--border); padding-top: 1rem;">
-                  <input type="text" v-model="newMember.name" class="form-control" placeholder="Nama Baru" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
-                  <input type="text" v-model="newMember.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
-                  <input type="text" v-model="newMember.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                <div class="mt-4 add-member-row" style="border-top: 1px dashed var(--border); padding-top: 1rem;">
+                  <input type="text" v-model="newMember.name" class="form-control" placeholder="Nama Baru" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="newMember.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="newMember.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
                   <button @click="addNewMember" class="btn btn-primary btn-sm" :disabled="!newMember.name">
                     <PlusCircle :size="16" /> Tambah
                   </button>
@@ -366,7 +366,7 @@ const copyLink = () => {
 
         <div class="form-group mt-4">
           <label class="form-label">Daftar Anggota</label>
-          <div v-for="(member, index) in members" :key="index" class="member-row mb-2">
+          <div v-for="(member, index) in members" :key="index" class="member-row mb-3">
             <input type="text" v-model="member.name" class="form-control" placeholder="Nama Anggota" style="flex: 1;">
             <input type="text" v-model="member.bank_name" class="form-control" placeholder="Bank/E-Wallet" style="flex: 1;">
             <input type="text" v-model="member.bank_account" class="form-control" placeholder="No Rekening (Opsional)" style="flex: 1;">
@@ -441,5 +441,48 @@ const copyLink = () => {
 }
 .text-secondary {
   color: var(--secondary);
+}
+
+/* Responsive Adjustments */
+.activity-header {
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-actions {
+  align-items: stretch;
+}
+
+.member-row, .manage-member-row, .add-member-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--surface);
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+@media (min-width: 768px) {
+  .activity-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .activity-header > div:first-child {
+    padding-right: 1rem;
+  }
+  .activity-actions {
+    align-items: flex-end;
+    margin-top: 0 !important;
+  }
+  .member-row, .manage-member-row, .add-member-row {
+    flex-direction: row;
+    align-items: center;
+    background: transparent;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+  }
 }
 </style>

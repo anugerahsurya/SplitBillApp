@@ -21,6 +21,45 @@ const involvedMemberIds = ref([]);
 const isSubmitting = ref(false);
 const editingTransactionId = ref(null);
 
+const isRecapModalOpen = ref(false);
+const selectedRecapMemberId = ref('');
+const tempRecapMemberId = ref('');
+
+const confirmRecapMember = () => {
+  if (tempRecapMemberId.value) {
+    selectedRecapMemberId.value = tempRecapMemberId.value;
+    isRecapModalOpen.value = false;
+  }
+};
+
+const recapData = computed(() => {
+  if (!selectedRecapMemberId.value || !transactions.value.length || !members.value.length) return null;
+  
+  const member = members.value.find(m => String(m.id) === String(selectedRecapMemberId.value));
+  if (!member) return null;
+  
+  const items = [];
+  let total = 0;
+  
+  transactions.value.forEach(t => {
+    const involved = t.involved_member_ids ? String(t.involved_member_ids).split(',') : [];
+    if (involved.includes(String(member.id))) {
+      const splitAmt = Number(t.amount) / involved.length;
+      items.push({
+        name: t.item_name || '-',
+        amount: splitAmt
+      });
+      total += splitAmt;
+    }
+  });
+  
+  return {
+    member: member,
+    items: items,
+    total: total
+  };
+});
+
 const fetchData = async () => {
   if (!activityId) {
     error.value = 'ID Kegiatan tidak ditemukan di URL.';
@@ -286,7 +325,7 @@ const copyAccount = (account) => {
       </div>
 
       <!-- Dashboard Cards -->
-      <div class="grid grid-cols-2 mb-4">
+      <div class="summary-cards-container mb-4">
         <div class="card summary-card" style="background: linear-gradient(135deg, #f79039, #e65c00); color: white;">
           <h4>Total Pengeluaran</h4>
           <div class="amount">{{ formatCurrency(totalExpense) }}</div>
@@ -298,6 +337,45 @@ const copyAccount = (account) => {
             <div style="font-size: 0.875rem; opacity: 0.9;">{{ formatCurrency(topContributor.amount) }}</div>
           </div>
           <div v-else style="opacity: 0.8;">Belum ada</div>
+        </div>
+      </div>
+
+      <!-- Recap Trigger -->
+      <div class="card mb-4 text-center" style="background: var(--surface);">
+        <p class="mb-3 font-semibold text-secondary">Ingin melihat rincian belanjamu?</p>
+        <button class="btn btn-secondary" @click="isRecapModalOpen = true">Klik Disini</button>
+      </div>
+
+      <!-- Recap Table -->
+      <div class="card mb-4" v-if="recapData">
+        <div class="recap-header">
+          <h3 class="card-title mb-0">Rekap Belanjaan: {{ recapData.member.name }}</h3>
+          <button class="btn btn-secondary btn-sm" @click="selectedRecapMemberId = ''">Tutup</button>
+        </div>
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; text-align: left; min-width: 300px;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <th style="padding: 0.75rem; font-weight: 600;">Nama Aktivitas</th>
+                <th style="padding: 0.75rem; font-weight: 600; text-align: right;">Biaya</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(item, idx) in recapData.items" :key="idx" style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 0.75rem;">{{ item.name }}</td>
+                <td style="padding: 0.75rem; text-align: right;">{{ formatCurrency(item.amount) }}</td>
+              </tr>
+              <tr v-if="recapData.items.length === 0">
+                <td colspan="2" style="padding: 1rem; text-align: center; color: var(--secondary);">Tidak ada pengeluaran.</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td style="padding: 0.75rem; font-weight: 700;">Total</td>
+                <td style="padding: 0.75rem; text-align: right; font-weight: 700; color: var(--danger);">{{ formatCurrency(recapData.total) }}</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </div>
 
@@ -339,7 +417,7 @@ const copyAccount = (account) => {
           </div>
         </div>
         
-        <div style="display: flex; gap: 1rem;" class="mt-4">
+        <div style="display: flex; gap: 1rem; flex-direction: column;" class="mt-4 form-actions">
           <button class="btn btn-primary" style="flex: 1;" @click="submitTransaction" :disabled="isSubmitting">
             <Save :size="20" v-if="!isSubmitting" />
             {{ isSubmitting ? 'Menyimpan...' : 'Simpan Transaksi' }}
@@ -355,7 +433,7 @@ const copyAccount = (account) => {
         <h3 class="card-title">Daftar Pengeluaran</h3>
         <div class="transaction-list">
           <div v-for="t in transactions" :key="t.id" class="transaction-item mb-3 p-3" style="border: 1px solid var(--border); border-radius: 8px;">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div class="transaction-header">
               <div>
                 <div style="font-weight: 600;">
                   {{ members.find(m => String(m.id) === String(t.paid_by_member_id))?.name || 'Unknown' }}
@@ -425,13 +503,31 @@ const copyAccount = (account) => {
             
             <div v-if="s.bankAccount" class="settlement-action">
               <div class="account-badge">
-                <span v-if="s.bankName" style="font-weight: 700; margin-right: 0.5rem;">{{ s.bankName }}</span>
+                <span v-if="s.bankName" class="badge-orange">{{ s.bankName }}</span>
                 {{ s.bankAccount }}
               </div>
               <button class="btn btn-secondary btn-sm" @click="copyAccount(s.bankAccount)">
                 <Copy :size="14" /> Copy
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Select Member for Recap -->
+      <div v-if="isRecapModalOpen" class="modal-overlay" @click.self="isRecapModalOpen = false">
+        <div class="modal-content card">
+          <h3 class="card-title">Pilih Anggota</h3>
+          <p class="text-muted mb-4">Siapa yang ingin dilihat rekap belanjanya?</p>
+          <div class="form-group">
+            <select v-model="tempRecapMemberId" class="form-control">
+              <option value="" disabled>Pilih Anggota</option>
+              <option v-for="m in members" :key="m.id" :value="m.id">{{ m.name }}</option>
+            </select>
+          </div>
+          <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.5rem;">
+            <button class="btn btn-secondary" @click="isRecapModalOpen = false">Batal</button>
+            <button class="btn btn-primary" @click="confirmRecapMember">Lihat Rekap</button>
           </div>
         </div>
       </div>
@@ -521,9 +617,17 @@ const copyAccount = (account) => {
 }
 .settlement-info {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+@media (min-width: 640px) {
+  .settlement-info {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
 }
 .settlement-amount {
   font-weight: 700;
@@ -543,8 +647,79 @@ const copyAccount = (account) => {
   font-size: 0.875rem;
   flex: 1;
 }
+.badge-orange {
+  background-color: #f97316;
+  color: white;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-right: 0.5rem;
+  display: inline-block;
+}
 .btn-sm {
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
+}
+
+/* Responsive Overrides */
+.summary-cards-container {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.transaction-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.recap-header {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: flex-start;
+}
+
+.form-actions {
+  flex-direction: column;
+}
+
+@media (min-width: 640px) {
+  .summary-cards-container {
+    grid-template-columns: 1fr 1fr;
+  }
+  .transaction-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .recap-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .form-actions {
+    flex-direction: row;
+  }
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.modal-content {
+  width: 100%;
+  max-width: 400px;
+  background: var(--background);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
 }
 </style>
