@@ -75,6 +75,32 @@ const totalExpense = computed(() => {
   return transactions.value.reduce((sum, t) => sum + Number(t.amount), 0);
 });
 
+// Calculate Top Spenders
+const spendersRanking = computed(() => {
+  if (!transactions.value.length || !members.value.length) return [];
+  
+  const expenses = {};
+  members.value.forEach(m => expenses[m.id] = 0);
+  
+  transactions.value.forEach(t => {
+    const amt = Number(t.amount);
+    const involved = t.involved_member_ids ? String(t.involved_member_ids).split(',') : [];
+    if (involved.length === 0) return;
+    const splitAmt = amt / involved.length;
+    
+    involved.forEach(id => {
+      if (expenses[id] !== undefined) {
+        expenses[id] += splitAmt;
+      }
+    });
+  });
+  
+  return members.value
+    .map(m => ({ id: m.id, name: m.name, amount: expenses[m.id] }))
+    .filter(m => m.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+});
+
 // Settlement Algorithm (Debt Simplification)
 const settlements = computed(() => {
   if (!transactions.value.length || !members.value.length) return [];
@@ -348,6 +374,25 @@ const copyAccount = (account) => {
         </div>
       </div>
 
+      <!-- Top Spenders Ranking -->
+      <div class="card mb-4" v-if="spendersRanking.length > 0">
+        <h3 class="card-title">Ranking Pengeluaran Terbanyak</h3>
+        <p class="text-muted mb-4" style="font-size: 0.875rem;">Urutan anggota berdasarkan total tagihan (pengeluaran).</p>
+        
+        <div class="ranking-list">
+          <div v-for="(spender, index) in spendersRanking" :key="spender.id" class="ranking-item">
+            <div class="ranking-rank">
+              <span v-if="index === 0" style="font-size: 1.5rem;" title="Peringkat 1">🥇</span>
+              <span v-else-if="index === 1" style="font-size: 1.5rem;" title="Peringkat 2">🥈</span>
+              <span v-else-if="index === 2" style="font-size: 1.5rem;" title="Peringkat 3">🥉</span>
+              <span v-else class="rank-number">{{ index + 1 }}</span>
+            </div>
+            <div class="ranking-name" style="flex: 1; font-weight: 600;">{{ spender.name }}</div>
+            <div class="ranking-amount" style="font-weight: 700; color: var(--danger);">{{ formatCurrency(spender.amount) }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Settlement List -->
       <div class="card">
         <h3 class="card-title">Hasil Pembagian (Settlement)</h3>
@@ -413,6 +458,40 @@ const copyAccount = (account) => {
 }
 
 /* Remove old checkbox styles */
+
+.ranking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.ranking-item {
+  display: flex;
+  align-items: center;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  gap: 1rem;
+}
+.ranking-rank {
+  width: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.rank-number {
+  background: var(--surface);
+  color: var(--secondary);
+  font-weight: 700;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid var(--border);
+  font-size: 0.875rem;
+}
 
 .settlement-list {
   display: flex;
