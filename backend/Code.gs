@@ -250,6 +250,51 @@ function doPost(e) {
       }
       return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
     }
+    if (action === 'addMember') {
+      const activityId = requestBody.activity_id;
+      const name = requestBody.name;
+      const bankName = requestBody.bank_name || '';
+      const bankAccount = requestBody.bank_account || '';
+      
+      const id = generateId();
+      db.getSheetByName('Members').appendRow([id, activityId, name, bankAccount, bankName]);
+      
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true, id: id })));
+    }
+
+    if (action === 'editMember') {
+      const memberId = requestBody.member_id;
+      const name = requestBody.name;
+      const bankName = requestBody.bank_name || '';
+      const bankAccount = requestBody.bank_account || '';
+      
+      const sheet = db.getSheetByName('Members');
+      const data = sheet.getDataRange().getValues();
+      
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][0]) === String(memberId)) {
+          sheet.getRange(i + 1, 3).setValue(name);
+          sheet.getRange(i + 1, 4).setValue(bankAccount);
+          sheet.getRange(i + 1, 5).setValue(bankName);
+          break;
+        }
+      }
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
+    }
+
+    if (action === 'deleteMember') {
+      const memberId = requestBody.member_id;
+      const sheet = db.getSheetByName('Members');
+      const data = sheet.getDataRange().getValues();
+      
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][0]) === String(memberId)) {
+          sheet.deleteRow(i + 1);
+          break;
+        }
+      }
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
+    }
     
     return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ error: 'Invalid action' })));
     

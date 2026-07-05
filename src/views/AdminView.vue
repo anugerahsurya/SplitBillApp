@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { api } from '../services/api';
-import { LogIn, UserPlus, Trash2, PlusCircle, Link as LinkIcon, Copy, List, RefreshCw, Edit } from 'lucide-vue-next';
+import { LogIn, UserPlus, Trash2, PlusCircle, Link as LinkIcon, Copy, List, RefreshCw, Edit, Save, Users } from 'lucide-vue-next';
 
 const isLoggedIn = ref(false);
 const password = ref('');
@@ -15,6 +15,11 @@ const activityName = ref('');
 const members = ref([{ name: '', bank_name: '', bank_account: '' }]);
 const isLoading = ref(false);
 const generatedLink = ref('');
+
+const manageMembersActivityId = ref(null);
+const membersToManage = ref([]);
+const isLoadingMembers = ref(false);
+const newMember = ref({ name: '', bank_name: '', bank_account: '' });
 
 const checkPassword = () => {
   if (password.value === 'adminsurya') {
@@ -91,6 +96,91 @@ const copyActivityLink = (id) => {
   const baseUrl = window.location.origin;
   navigator.clipboard.writeText(`${baseUrl}/?id=${id}`);
   alert("Link disalin!");
+};
+
+const manageMembers = async (activityId) => {
+  if (manageMembersActivityId.value === activityId) {
+    manageMembersActivityId.value = null;
+    return;
+  }
+  manageMembersActivityId.value = activityId;
+  isLoadingMembers.value = true;
+  try {
+    const res = await api.getActivity(activityId);
+    if (res.success) {
+      membersToManage.value = res.data.members;
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Gagal mengambil data anggota');
+  } finally {
+    isLoadingMembers.value = false;
+  }
+};
+
+const closeManageMembers = () => {
+  manageMembersActivityId.value = null;
+};
+
+const saveMember = async (member) => {
+  try {
+    const res = await api.editMember({
+      member_id: member.id,
+      name: member.name,
+      bank_name: member.bank_name,
+      bank_account: member.bank_account
+    });
+    if (res.success) {
+      alert('Berhasil menyimpan perubahan anggota');
+    } else {
+      alert('Gagal menyimpan: ' + (res.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Terjadi kesalahan koneksi');
+  }
+};
+
+const removeExistingMember = async (member, index) => {
+  if (!confirm(`Yakin ingin menghapus anggota ${member.name}?`)) return;
+  
+  try {
+    const res = await api.deleteMember(member.id);
+    if (res.success) {
+      membersToManage.value.splice(index, 1);
+    } else {
+      alert('Gagal menghapus: ' + (res.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Terjadi kesalahan koneksi');
+  }
+};
+
+const addNewMember = async () => {
+  if (!newMember.value.name.trim()) return;
+  
+  try {
+    const res = await api.addMember({
+      activity_id: manageMembersActivityId.value,
+      name: newMember.value.name,
+      bank_name: newMember.value.bank_name,
+      bank_account: newMember.value.bank_account
+    });
+    
+    if (res.success) {
+      membersToManage.value.push({
+        id: res.id,
+        activity_id: manageMembersActivityId.value,
+        name: newMember.value.name,
+        bank_name: newMember.value.bank_name,
+        bank_account: newMember.value.bank_account
+      });
+      newMember.value = { name: '', bank_name: '', bank_account: '' };
+    } else {
+      alert('Gagal menambah anggota: ' + (res.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Terjadi kesalahan koneksi');
+  }
 };
 
 const formatDate = (dateStr) => {
@@ -217,11 +307,46 @@ const copyLink = () => {
                   <Copy :size="16" /> Copy Link
                 </button>
                 <div style="display: flex; gap: 0.5rem;">
-                  <button v-if="editingActivityId !== act.id" @click="startEdit(act)" class="btn btn-secondary btn-sm" style="color: var(--primary);" title="Edit">
+                  <button @click="manageMembers(act.id)" class="btn btn-secondary btn-sm" style="color: var(--primary);" title="Kelola Anggota">
+                    <Users :size="16" /> Kelola Anggota
+                  </button>
+                  <button v-if="editingActivityId !== act.id" @click="startEdit(act)" class="btn btn-secondary btn-sm" style="color: var(--primary);" title="Edit Nama">
                     <Edit :size="16" /> Edit
                   </button>
                   <button @click="deleteActivityItem(act.id)" class="btn btn-secondary btn-sm" style="color: var(--danger);" title="Hapus">
                     <Trash2 :size="16" /> Hapus
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Manage Members Section -->
+            <div v-if="manageMembersActivityId === act.id" class="mt-3 p-3" style="background: var(--background); border-radius: var(--radius); border: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h4 style="margin: 0; font-size: 1rem; color: var(--primary);">Kelola Anggota</h4>
+                <button @click="closeManageMembers" class="btn btn-secondary btn-sm">Tutup</button>
+              </div>
+              
+              <div v-if="isLoadingMembers" class="text-center py-2 text-secondary">Memuat anggota...</div>
+              <div v-else>
+                <div v-for="(member, index) in membersToManage" :key="member.id || index" class="mb-2" style="display: flex; gap: 0.5rem; align-items: center;">
+                  <input type="text" v-model="member.name" class="form-control" placeholder="Nama" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="member.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="member.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                  <button @click="saveMember(member)" class="btn btn-primary btn-sm" title="Simpan">
+                    <Save :size="16" />
+                  </button>
+                  <button @click="removeExistingMember(member, index)" class="btn btn-secondary btn-sm" style="color: var(--danger);" title="Hapus">
+                    <Trash2 :size="16" />
+                  </button>
+                </div>
+                
+                <div class="mt-3" style="display: flex; gap: 0.5rem; align-items: center; border-top: 1px dashed var(--border); padding-top: 1rem;">
+                  <input type="text" v-model="newMember.name" class="form-control" placeholder="Nama Baru" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="newMember.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="newMember.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                  <button @click="addNewMember" class="btn btn-primary btn-sm" :disabled="!newMember.name">
+                    <PlusCircle :size="16" /> Tambah
                   </button>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 // PENTING: Ganti URL ini dengan URL Web App Google Apps Script yang Anda deploy
-export const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxXqr4tMQ7crK1shuNKJzFKR5KTEEN8VsAEiOd0I7ws6dJruGTrCxsv0kTjF3pnQuJY/exec";
+export const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyHZXBrsmNnhw9C2VK3FhrXo8lM-AQRzhybJrBeHthEmIbBEG2G_i9I37_qx5oPHWYG/exec";
 
 export const api = {
   async getActivity(id) {
@@ -103,6 +103,48 @@ export const api = {
         involved_member_ids: data.involved_member_ids,
         item_name: data.item_name
       }),
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    });
+    if (!response.ok) throw new Error('Network response was not ok');
+    return await response.json();
+  },
+
+  async addMember(data) {
+    const response = await fetch(GAS_WEB_APP_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'addMember',
+        activity_id: data.activity_id,
+        name: data.name,
+        bank_name: data.bank_name,
+        bank_account: data.bank_account
+      }),
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    });
+    if (!response.ok) throw new Error('Network response was not ok');
+    return await response.json();
+  },
+
+  async editMember(data) {
+    const response = await fetch(GAS_WEB_APP_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'editMember',
+        member_id: data.member_id,
+        name: data.name,
+        bank_name: data.bank_name,
+        bank_account: data.bank_account
+      }),
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+    });
+    if (!response.ok) throw new Error('Network response was not ok');
+    return await response.json();
+  },
+
+  async deleteMember(memberId) {
+    const response = await fetch(GAS_WEB_APP_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'deleteMember', member_id: memberId }),
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }
     });
     if (!response.ok) throw new Error('Network response was not ok');
