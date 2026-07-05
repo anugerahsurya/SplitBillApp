@@ -83,6 +83,17 @@ function doGet(e) {
       })));
     }
     
+    if (action === 'getAllActivities') {
+      const activities = sheetToObjectArray(db.getSheetByName('Activities'));
+      // sort by created_at desc
+      activities.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        data: activities
+      })));
+    }
+    
     return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ error: 'Invalid action' })));
     
   } catch (err) {
@@ -144,6 +155,86 @@ function doPost(e) {
         }
       }
       
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
+    }
+    
+    if (action === 'deleteActivity') {
+      const activityId = requestBody.activity_id;
+      
+      let sheet = db.getSheetByName('Activities');
+      let data = sheet.getDataRange().getValues();
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][0]) === String(activityId)) {
+          sheet.deleteRow(i + 1);
+          break;
+        }
+      }
+      
+      sheet = db.getSheetByName('Members');
+      data = sheet.getDataRange().getValues();
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][1]) === String(activityId)) {
+          sheet.deleteRow(i + 1);
+        }
+      }
+      
+      sheet = db.getSheetByName('Transactions');
+      data = sheet.getDataRange().getValues();
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][1]) === String(activityId)) {
+          sheet.deleteRow(i + 1);
+        }
+      }
+      
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
+    }
+
+    if (action === 'editActivity') {
+      const activityId = requestBody.activity_id;
+      const newName = requestBody.name;
+      const sheet = db.getSheetByName('Activities');
+      const data = sheet.getDataRange().getValues();
+      
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][0]) === String(activityId)) {
+          sheet.getRange(i + 1, 2).setValue(newName);
+          break;
+        }
+      }
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
+    }
+
+    if (action === 'deleteTransaction') {
+      const transactionId = requestBody.transaction_id;
+      const sheet = db.getSheetByName('Transactions');
+      const data = sheet.getDataRange().getValues();
+      
+      for (let i = data.length - 1; i >= 1; i--) {
+        if (String(data[i][0]) === String(transactionId)) {
+          sheet.deleteRow(i + 1);
+          break;
+        }
+      }
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
+    }
+
+    if (action === 'editTransaction') {
+      const transactionId = requestBody.transaction_id;
+      const paidBy = requestBody.paid_by_member_id;
+      const amount = requestBody.amount;
+      const involved = requestBody.involved_member_ids;
+      
+      const sheet = db.getSheetByName('Transactions');
+      const data = sheet.getDataRange().getValues();
+      
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][0]) === String(transactionId)) {
+          sheet.getRange(i + 1, 3).setValue(paidBy);
+          sheet.getRange(i + 1, 4).setValue(amount);
+          sheet.getRange(i + 1, 5).setValue(involved.join(','));
+          break;
+        }
+      }
       return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true })));
     }
     

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { api } from '../services/api';
-import { CheckSquare, Save, Copy } from 'lucide-vue-next';
+import { CheckSquare, Save, Copy, Edit, Trash2 } from 'lucide-vue-next';
 
 const route = useRoute();
 const activityId = route.query.id;
@@ -18,6 +18,7 @@ const paidById = ref('');
 const amount = ref('');
 const involvedMemberIds = ref([]);
 const isSubmitting = ref(false);
+const editingTransactionId = ref(null);
 
 const fetchData = async () => {
   if (!activityId) {
@@ -165,19 +166,25 @@ const submitTransaction = async () => {
   
   isSubmitting.value = true;
   try {
-    const res = await api.addTransaction({
-      activity_id: activityId,
-      paid_by_member_id: paidById.value,
-      amount: amount.value,
-      involved_member_ids: involvedMemberIds.value
-    });
+    let res;
+    if (editingTransactionId.value) {
+      res = await api.editTransaction({
+        transaction_id: editingTransactionId.value,
+        paid_by_member_id: paidById.value,
+        amount: amount.value,
+        involved_member_ids: involvedMemberIds.value
+      });
+    } else {
+      res = await api.addTransaction({
+        activity_id: activityId,
+        paid_by_member_id: paidById.value,
+        amount: amount.value,
+        involved_member_ids: involvedMemberIds.value
+      });
+    }
     
     if (res.success) {
-      // Reset form
-      paidById.value = '';
-      amount.value = '';
-      involvedMemberIds.value = [];
-      // Reload data
+      cancelEditTransaction();
       await fetchData();
     } else {
       alert("Gagal menyimpan transaksi: " + res.error);
@@ -188,6 +195,36 @@ const submitTransaction = async () => {
   } finally {
     isSubmitting.value = false;
   }
+};
+
+const deleteTransaction = async (id) => {
+  if (confirm('Yakin ingin menghapus pengeluaran ini?')) {
+    try {
+      const res = await api.deleteTransaction(id);
+      if (res.success) {
+        await fetchData();
+      } else {
+        alert('Gagal menghapus: ' + (res.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Terjadi kesalahan koneksi.');
+    }
+  }
+};
+
+const editTransaction = (t) => {
+  editingTransactionId.value = t.id;
+  paidById.value = t.paid_by_member_id;
+  amount.value = t.amount;
+  involvedMemberIds.value = t.involved_member_ids ? String(t.involved_member_ids).split(',') : [];
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+const cancelEditTransaction = () => {
+  editingTransactionId.value = null;
+  paidById.value = '';
+  amount.value = '';
+  involvedMemberIds.value = [];
 };
 
 const copyAccount = (account) => {
@@ -233,8 +270,8 @@ const copyAccount = (account) => {
       </div>
 
       <!-- Add Transaction Form -->
-      <div class="card" v-if="activity.status !== 'finished'">
-        <h3 class="card-title">Catat Pengeluaran</h3>
+      <div class="card mb-4" v-if="activity.status !== 'finished'">
+        <h3 class="card-title">{{ editingTransactionId ? 'Edit Pengeluaran' : 'Catat Pengeluaran' }}</h3>
         
         <div class="form-group">
           <label class="form-label">Dibayar Oleh</label>
@@ -265,10 +302,50 @@ const copyAccount = (account) => {
           </div>
         </div>
         
-        <button class="btn btn-primary btn-block mt-4" @click="submitTransaction" :disabled="isSubmitting">
-          <Save :size="20" v-if="!isSubmitting" />
-          {{ isSubmitting ? 'Menyimpan...' : 'Simpan Transaksi' }}
-        </button>
+        <div style="display: flex; gap: 1rem;" class="mt-4">
+          <button class="btn btn-primary" style="flex: 1;" @click="submitTransaction" :disabled="isSubmitting">
+            <Save :size="20" v-if="!isSubmitting" />
+            {{ isSubmitting ? 'Menyimpan...' : 'Simpan Transaksi' }}
+          </button>
+          <button v-if="editingTransactionId" class="btn btn-secondary" style="flex: 1;" @click="cancelEditTransaction" :disabled="isSubmitting">
+            Batal
+          </button>
+        </div>
+      </div>
+
+      <!-- Transaction List -->
+      <div class="card mb-4" v-if="transactions.length > 0">
+        <h3 class="card-title">Daftar Pengeluaran</h3>
+        <div class="transaction-list">
+          <div v-for="t in transactions" :key="t.id" class="transaction-item mb-3 p-3" style="border: 1px solid var(--border); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+              <div>
+                <div style="font-weight: 600;">
+                  {{ members.find(m => String(m.id) === String(t.paid_by_member_id))?.name || 'Unknown' }}
+                  membayar
+                  <span style="color: var(--danger);">{{ formatCurrency(t.amount) }}</span>
+                </div>
+                <div style="font-size: 0.875rem; color: var(--secondary); margin-top: 0.25rem;">
+                  Untuk: 
+                  {{ 
+                    (t.involved_member_ids ? String(t.involved_member_ids).split(',') : [])
+                      .map(id => members.find(m => String(m.id) === String(id))?.name || id)
+                      .join(', ')
+                  }}
+                </div>
+              </div>
+              
+              <div style="display: flex; gap: 0.5rem;" v-if="activity.status !== 'finished'">
+                <button @click="editTransaction(t)" class="btn btn-secondary btn-sm" style="color: var(--primary);" title="Edit">
+                  <Edit :size="16" />
+                </button>
+                <button @click="deleteTransaction(t.id)" class="btn btn-secondary btn-sm" style="color: var(--danger);" title="Hapus">
+                  <Trash2 :size="16" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Settlement List -->
