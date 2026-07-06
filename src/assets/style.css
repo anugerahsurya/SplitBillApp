@@ -211,6 +211,10 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+[data-theme="dark"] .toggle-slider::before {
+  background-color: var(--text-main);
+}
+
 .toggle-switch input:checked + .toggle-slider {
   background: var(--primary-gradient);
 }
@@ -285,5 +289,309 @@ body {
 @media (max-width: 640px) {
   .grid-cols-2 {
     grid-template-columns: 1fr;
+  }
+}
+
+.toast-container {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  z-index: 9999;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  color: white;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.toast-success {
+  background-color: var(--secondary);
+}
+
+.toast-error {
+  background-color: var(--danger);
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* UserView Specific Styles */
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 99px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.badge-success { background-color: #dcfce7; color: #166534; }
+.badge-secondary { background-color: #f1f5f9; color: #475569; }
+.badge-active { background: #DBEAFE; color: #1E40AF; }
+.badge-finished { background: #F3F4F6; color: #4B5563; }
+
+.summary-card h4 {
+  font-size: 0.875rem;
+  font-weight: 500;
+  opacity: 0.9;
+  margin-bottom: 0.5rem;
+}
+.summary-card .amount {
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+
+.checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+  background: var(--background);
+  padding: 1.25rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.ranking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.ranking-item {
+  display: flex;
+  align-items: center;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  gap: 1rem;
+}
+.ranking-rank {
+  width: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.rank-number {
+  background: var(--surface);
+  color: var(--secondary);
+  font-weight: 700;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.settlement-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.settlement-item {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+.settlement-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+@media (min-width: 640px) {
+  .settlement-info {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+}
+.settlement-amount {
+  font-weight: 700;
+  color: var(--danger);
+}
+.settlement-action {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface);
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+}
+.account-badge {
+  font-family: monospace;
+  font-size: 0.875rem;
+  flex: 1;
+}
+.badge-orange {
+  background-color: #f97316;
+  color: white;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-right: 0.5rem;
+  display: inline-block;
+}
+.btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.summary-cards-container {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.transaction-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.recap-header {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  align-items: flex-start;
+}
+
+.form-actions {
+  flex-direction: column;
+}
+
+@media (min-width: 640px) {
+  .summary-cards-container {
+    grid-template-columns: 1fr 1fr;
+  }
+  .transaction-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .recap-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .form-actions {
+    flex-direction: row;
+  }
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.modal-content {
+  width: 100%;
+  max-width: 400px;
+  background: var(--background);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+}
+
+/* AdminView Specific Styles */
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+.member-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.link-result {
+  background-color: #F0FDF4;
+  padding: 1rem;
+  border-radius: var(--radius);
+  border: 1px solid #BBF7D0;
+}
+
+.activity-header {
+  display: flex;
+  flex-direction: column;
+}
+
+.activity-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  align-items: stretch;
+}
+
+.activity-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.member-row, .manage-member-row, .add-member-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--surface);
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+@media (min-width: 768px) {
+  .activity-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .activity-header > div:first-child {
+    padding-right: 1rem;
+  }
+  .activity-actions {
+    align-items: flex-end;
+    margin-top: 0 !important;
+  }
+  .activity-actions-row {
+    flex-wrap: nowrap;
+  }
+  .member-row, .manage-member-row, .add-member-row {
+    flex-direction: row;
+    align-items: center;
+    background: transparent;
+    padding: 0;
+    border: none;
+    border-radius: 0;
   }
 }
