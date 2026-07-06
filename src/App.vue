@@ -1,9 +1,20 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, provide } from 'vue'
 import { RouterView, useRouter } from 'vue-router'
-import { Banknote, Moon, Sun } from 'lucide-vue-next'
+import { Banknote, Moon, Sun, CheckCircle, AlertCircle } from 'lucide-vue-next'
 
 const isDark = ref(false)
+const toasts = ref([])
+
+const showToast = (message, type = 'success') => {
+  const id = Date.now()
+  toasts.value.push({ id, message, type })
+  setTimeout(() => {
+    toasts.value = toasts.value.filter(t => t.id !== id)
+  }, 3000)
+}
+
+provide('toast', showToast)
 
 const toggleTheme = () => {
   isDark.value = !isDark.value
@@ -45,6 +56,15 @@ onMounted(() => {
     <main class="main-content">
       <RouterView />
     </main>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container">
+      <div v-for="t in toasts" :key="t.id" :class="['toast', `toast-${t.type}`]">
+        <CheckCircle v-if="t.type === 'success'" :size="20" />
+        <AlertCircle v-else :size="20" />
+        <span>{{ t.message }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -68,6 +88,47 @@ onMounted(() => {
 @media (max-width: 640px) {
   .header-subtitle {
     display: none;
+  }
+}
+
+.toast-container {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  z-index: 9999;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  color: white;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.toast-success {
+  background-color: var(--secondary);
+}
+
+.toast-error {
+  background-color: var(--danger);
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 </style>

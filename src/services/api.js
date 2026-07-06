@@ -1,5 +1,5 @@
 // PENTING: Ganti URL ini dengan URL Web App Google Apps Script yang Anda deploy
-export const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyHZXBrsmNnhw9C2VK3FhrXo8lM-AQRzhybJrBeHthEmIbBEG2G_i9I37_qx5oPHWYG/exec";
+export const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx6sEpZZUB5QKij2KNSJLAaDkzUTBPi3iGzGoNw-haptFT6LIqvVm2ULqWG3_MzmSu6/exec";
 
 export const api = {
   async getActivity(id) {

@@ -1,8 +1,10 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, inject } from 'vue';
 import { useRoute } from 'vue-router';
 import { api } from '../services/api';
 import { CheckSquare, Save, Copy, Edit, Trash2 } from 'lucide-vue-next';
+
+const toast = inject('toast');
 
 const route = useRoute();
 const activityId = route.query.id;
@@ -226,7 +228,7 @@ const selectAllInvolved = () => {
 
 const submitTransaction = async () => {
   if (!paidById.value || !amount.value || involvedMemberIds.value.length === 0) {
-    alert("Mohon lengkapi form transaksi.");
+    toast("Mohon lengkapi form transaksi.", "error");
     return;
   }
   
@@ -254,11 +256,12 @@ const submitTransaction = async () => {
     if (res.success) {
       cancelEditTransaction();
       await fetchData();
+      toast("Transaksi berhasil disimpan!", "success");
     } else {
-      alert("Gagal menyimpan transaksi: " + res.error);
+      toast("Gagal menyimpan transaksi: " + res.error, "error");
     }
   } catch (err) {
-    alert("Terjadi kesalahan.");
+    toast("Terjadi kesalahan koneksi.", "error");
     console.error(err);
   } finally {
     isSubmitting.value = false;
@@ -270,12 +273,13 @@ const deleteTransaction = async (id) => {
     try {
       const res = await api.deleteTransaction(id);
       if (res.success) {
+        toast("Transaksi berhasil dihapus.", "success");
         await fetchData();
       } else {
-        alert('Gagal menghapus: ' + (res.error || 'Unknown error'));
+        toast('Gagal menghapus: ' + (res.error || 'Unknown error'), 'error');
       }
     } catch (err) {
-      alert('Terjadi kesalahan koneksi.');
+      toast('Terjadi kesalahan koneksi.', 'error');
     }
   }
 };
@@ -300,7 +304,7 @@ const cancelEditTransaction = () => {
 const copyAccount = (account) => {
   if (!account) return;
   navigator.clipboard.writeText(account);
-  alert("Nomor rekening disalin!");
+  toast("Nomor rekening disalin!", "success");
 };
 </script>
 

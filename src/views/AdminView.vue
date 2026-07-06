@@ -1,7 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, inject } from 'vue';
 import { api } from '../services/api';
 import { LogIn, UserPlus, Trash2, PlusCircle, Link as LinkIcon, Copy, List, RefreshCw, Edit, Save, Users } from 'lucide-vue-next';
+
+const toast = inject('toast');
 
 const isLoggedIn = ref(false);
 const password = ref('');
@@ -60,7 +62,7 @@ const cancelEdit = () => {
 
 const saveEdit = async () => {
   if (!editActivityName.value.trim()) {
-    alert('Nama kegiatan tidak boleh kosong');
+    toast('Nama kegiatan tidak boleh kosong', 'error');
     return;
   }
   
@@ -69,11 +71,12 @@ const saveEdit = async () => {
     if (res.success) {
       await fetchActivities();
       cancelEdit();
+      toast('Berhasil menyimpan kegiatan!', 'success');
     } else {
-      alert('Gagal mengedit kegiatan: ' + (res.error || 'Unknown error'));
+      toast('Gagal mengedit kegiatan: ' + (res.error || 'Unknown error'), 'error');
     }
   } catch (err) {
-    alert('Terjadi kesalahan koneksi saat menyimpan.');
+    toast('Terjadi kesalahan koneksi saat menyimpan.', 'error');
   }
 };
 
@@ -82,12 +85,13 @@ const deleteActivityItem = async (id) => {
     try {
       const res = await api.deleteActivity(id);
       if (res.success) {
+        toast('Kegiatan berhasil dihapus!', 'success');
         await fetchActivities();
       } else {
-        alert('Gagal menghapus kegiatan: ' + (res.error || 'Unknown error'));
+        toast('Gagal menghapus kegiatan: ' + (res.error || 'Unknown error'), 'error');
       }
     } catch (err) {
-      alert('Terjadi kesalahan koneksi.');
+      toast('Terjadi kesalahan koneksi.', 'error');
     }
   }
 };
@@ -95,7 +99,7 @@ const deleteActivityItem = async (id) => {
 const copyActivityLink = (id) => {
   const baseUrl = window.location.origin;
   navigator.clipboard.writeText(`${baseUrl}/?id=${id}`);
-  alert("Link disalin!");
+  toast("Link disalin!", "success");
 };
 
 const manageMembers = async (activityId) => {
@@ -112,7 +116,7 @@ const manageMembers = async (activityId) => {
     }
   } catch (err) {
     console.error(err);
-    alert('Gagal mengambil data anggota');
+    toast('Gagal mengambil data anggota', 'error');
   } finally {
     isLoadingMembers.value = false;
   }
@@ -131,12 +135,12 @@ const saveMember = async (member) => {
       bank_account: member.bank_account
     });
     if (res.success) {
-      alert('Berhasil menyimpan perubahan anggota');
+      toast('Berhasil menyimpan perubahan anggota', 'success');
     } else {
-      alert('Gagal menyimpan: ' + (res.error || 'Unknown error'));
+      toast('Gagal menyimpan: ' + (res.error || 'Unknown error'), 'error');
     }
   } catch (err) {
-    alert('Terjadi kesalahan koneksi');
+    toast('Terjadi kesalahan koneksi', 'error');
   }
 };
 
@@ -147,11 +151,12 @@ const removeExistingMember = async (member, index) => {
     const res = await api.deleteMember(member.id);
     if (res.success) {
       membersToManage.value.splice(index, 1);
+      toast('Anggota berhasil dihapus', 'success');
     } else {
-      alert('Gagal menghapus: ' + (res.error || 'Unknown error'));
+      toast('Gagal menghapus: ' + (res.error || 'Unknown error'), 'error');
     }
   } catch (err) {
-    alert('Terjadi kesalahan koneksi');
+    toast('Terjadi kesalahan koneksi', 'error');
   }
 };
 
@@ -175,11 +180,12 @@ const addNewMember = async () => {
         bank_account: newMember.value.bank_account
       });
       newMember.value = { name: '', bank_name: '', bank_account: '' };
+      toast('Berhasil menambah anggota', 'success');
     } else {
-      alert('Gagal menambah anggota: ' + (res.error || 'Unknown error'));
+      toast('Gagal menambah anggota: ' + (res.error || 'Unknown error'), 'error');
     }
   } catch (err) {
-    alert('Terjadi kesalahan koneksi');
+    toast('Terjadi kesalahan koneksi', 'error');
   }
 };
 
@@ -201,7 +207,7 @@ const removeMember = (index) => {
 
 const createActivity = async () => {
   if (!activityName.value || members.value.some(m => !m.name)) {
-    alert("Mohon lengkapi nama kegiatan dan semua nama anggota.");
+    toast("Mohon lengkapi nama kegiatan dan semua nama anggota.", "error");
     return;
   }
 
@@ -218,11 +224,12 @@ const createActivity = async () => {
       // Reset form
       activityName.value = '';
       members.value = [{ name: '', bank_name: '', bank_account: '' }];
+      toast("Kegiatan berhasil dibuat!", "success");
     } else {
-      alert("Gagal membuat kegiatan: " + (res.error || "Unknown error"));
+      toast("Gagal membuat kegiatan: " + (res.error || "Unknown error"), "error");
     }
   } catch (err) {
-    alert("Terjadi kesalahan koneksi. Pastikan URL Web App GAS sudah diatur di src/services/api.js");
+    toast("Terjadi kesalahan koneksi. Pastikan URL Web App GAS sudah diatur di src/services/api.js", "error");
     console.error(err);
   } finally {
     isLoading.value = false;
@@ -231,7 +238,7 @@ const createActivity = async () => {
 
 const copyLink = () => {
   navigator.clipboard.writeText(generatedLink.value);
-  alert("Link disalin!");
+  toast("Link disalin!", "success");
 };
 </script>
 
