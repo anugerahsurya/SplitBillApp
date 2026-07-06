@@ -309,7 +309,7 @@ export default function AdminView() {
           ) : (
             <div className="activities-list">
               {allActivities.map((act) => (
-                <div key={act.id} className="activity-item mb-3 p-4" style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--card)' }}>
+                <div key={act.id} className="activity-item" style={{ marginBottom: '1rem', padding: '1.25rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)' }}>
                   <div className="activity-header">
                     <div style={{ flex: 1 }}>
                       {editingActivityId === act.id ? (
