@@ -302,11 +302,11 @@ const copyLink = () => {
                   </span>
                 </div>
               </div>
-              <div style="display: flex; flex-direction: column; gap: 0.5rem; align-items: stretch; margin-top: 1rem;" class="activity-actions">
+              <div class="activity-actions">
                 <button @click="copyActivityLink(act.id)" class="btn btn-secondary btn-sm" title="Copy Link">
                   <Copy :size="16" /> Copy Link
                 </button>
-                <div style="display: flex; gap: 0.5rem;">
+                <div class="activity-actions-row">
                   <button @click="manageMembers(act.id)" class="btn btn-secondary btn-sm" style="color: var(--primary);" title="Kelola Anggota">
                     <Users :size="16" /> Kelola Anggota
                   </button>
@@ -330,9 +330,9 @@ const copyLink = () => {
               <div v-if="isLoadingMembers" class="text-center py-2 text-secondary">Memuat anggota...</div>
               <div v-else>
                 <div v-for="(member, index) in membersToManage" :key="member.id || index" class="mb-3 manage-member-row">
-                  <input type="text" v-model="member.name" class="form-control" placeholder="Nama" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
-                  <input type="text" v-model="member.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
-                  <input type="text" v-model="member.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="member.name" class="form-control" placeholder="Nama" style="flex: 1; min-width: 0; font-size: 0.875rem;">
+                  <input type="text" v-model="member.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; font-size: 0.875rem;">
+                  <input type="text" v-model="member.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; font-size: 0.875rem;">
                   <button @click="saveMember(member)" class="btn btn-primary btn-sm" title="Simpan">
                     <Save :size="16" />
                   </button>
@@ -342,9 +342,9 @@ const copyLink = () => {
                 </div>
                 
                 <div class="mt-4 add-member-row" style="border-top: 1px dashed var(--border); padding-top: 1rem;">
-                  <input type="text" v-model="newMember.name" class="form-control" placeholder="Nama Baru" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
-                  <input type="text" v-model="newMember.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
-                  <input type="text" v-model="newMember.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; padding: 0.5rem; font-size: 0.875rem;">
+                  <input type="text" v-model="newMember.name" class="form-control" placeholder="Nama Baru" style="flex: 1; min-width: 0; font-size: 0.875rem;">
+                  <input type="text" v-model="newMember.bank_name" class="form-control" placeholder="Bank" style="flex: 1; min-width: 0; font-size: 0.875rem;">
+                  <input type="text" v-model="newMember.bank_account" class="form-control" placeholder="No Rek" style="flex: 1; min-width: 0; font-size: 0.875rem;">
                   <button @click="addNewMember" class="btn btn-primary btn-sm" :disabled="!newMember.name">
                     <PlusCircle :size="16" /> Tambah
                   </button>
@@ -450,7 +450,17 @@ const copyLink = () => {
 }
 
 .activity-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
   align-items: stretch;
+}
+
+.activity-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .member-row, .manage-member-row, .add-member-row {
@@ -475,6 +485,9 @@ const copyLink = () => {
   .activity-actions {
     align-items: flex-end;
     margin-top: 0 !important;
+  }
+  .activity-actions-row {
+    flex-wrap: nowrap;
   }
   .member-row, .manage-member-row, .add-member-row {
     flex-direction: row;

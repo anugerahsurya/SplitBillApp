@@ -62,7 +62,6 @@ const recapData = computed(() => {
 
 const fetchData = async () => {
   if (!activityId) {
-    error.value = 'ID Kegiatan tidak ditemukan di URL.';
     isLoading.value = false;
     return;
   }
@@ -307,7 +306,21 @@ const copyAccount = (account) => {
 
 <template>
   <div>
-    <div v-if="isLoading" class="text-center" style="padding: 3rem;">
+    <!-- Landing Page -->
+    <div v-if="!activityId" class="text-center" style="padding: 3rem 1rem;">
+      <h2 style="color: var(--primary); margin-bottom: 1rem; font-size: 2rem;">Selamat Datang di SplitBill</h2>
+      <p style="color: var(--text-muted); margin-bottom: 2.5rem; font-size: 1.125rem;">Bagi tagihan bersama teman jadi lebih mudah dan transparan.</p>
+      
+      <div class="card" style="max-width: 400px; margin: 0 auto; background: var(--surface);">
+        <h3 style="margin-bottom: 1rem; font-size: 1.25rem;">Area Admin</h3>
+        <p style="margin-bottom: 1.5rem; color: var(--text-muted); font-size: 0.875rem;">Buat kegiatan baru atau kelola kegiatan yang sudah ada.</p>
+        <router-link to="/admin" class="btn btn-primary btn-block" style="padding: 0.75rem;">
+          Masuk ke Laman Admin
+        </router-link>
+      </div>
+    </div>
+
+    <div v-else-if="isLoading" class="text-center" style="padding: 3rem;">
       <p>Memuat data kegiatan...</p>
     </div>
     
@@ -503,7 +516,7 @@ const copyAccount = (account) => {
             
             <div v-if="s.bankAccount" class="settlement-action">
               <div class="account-badge">
-                <span v-if="s.bankName" class="badge-orange">{{ s.bankName }}</span>
+                <span class="badge-orange">{{ s.bankName || 'Rekening/E-Wallet' }}</span>
                 {{ s.bankAccount }}
               </div>
               <button class="btn btn-secondary btn-sm" @click="copyAccount(s.bankAccount)">

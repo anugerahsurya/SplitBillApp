@@ -19,6 +19,23 @@
   --radius: 12px;
 }
 
+[data-theme="dark"] {
+  --primary: #f79039; 
+  --primary-hover: #f8a55d; 
+  --primary-gradient: linear-gradient(135deg, #f8a55d, #f79039);
+  --secondary: #10B981;
+  --danger: #ef4444;
+  --background: #0f172a;
+  --surface: #1e293b;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --border: #334155;
+  
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -99,11 +116,17 @@ body {
 .card {
   background: var(--surface);
   border-radius: var(--radius);
-  padding: 1.5rem;
+  padding: 1.25rem;
   box-shadow: var(--shadow-md);
   margin-bottom: 1.5rem;
   border: 1px solid var(--border);
   transition: transform 0.2s, box-shadow 0.2s;
+}
+
+@media (min-width: 640px) {
+  .card {
+    padding: 2rem;
+  }
 }
 
 .card:hover {
@@ -112,15 +135,19 @@ body {
 }
 
 .card-title {
-  font-size: 1.25rem;
-  font-weight: 600;
-  margin-bottom: 1rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-bottom: 1.25rem;
   color: var(--text-main);
+  background: var(--primary-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-block;
 }
 
 /* Forms and Inputs */
 .form-group {
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 
 .form-label {
