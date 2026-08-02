@@ -21,6 +21,8 @@ export default function UserView() {
   const [itemName, setItemName] = useState('');
   const [involvedMemberIds, setInvolvedMemberIds] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [inputMode, setInputMode] = useState('simple'); // 'simple' | 'advanced'
+  const [advancedAmounts, setAdvancedAmounts] = useState({}); // { memberId: string }
 
   const [editingTransactionId, setEditingTransactionId] = useState(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -283,11 +285,51 @@ export default function UserView() {
         setAmount('');
         setItemName('');
         setInvolvedMemberIds([]);
+        setAdvancedAmounts({});
         await fetchData();
         toast("Pengeluaran berhasil ditambahkan!", "success");
       } else {
         toast("Gagal menambahkan transaksi: " + res.error, "error");
       }
+    } catch (err) {
+      toast("Terjadi kesalahan koneksi.", "error");
+      console.error(err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const submitAdvancedTransaction = async () => {
+    if (!paidById) {
+      toast("Pilih siapa yang bayar.", "error");
+      return;
+    }
+    const entries = Object.entries(advancedAmounts).filter(([, v]) => Number(v) > 0);
+    if (entries.length === 0) {
+      toast("Masukkan nominal untuk minimal 1 orang.", "error");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // Submit satu transaksi per orang agar settlement tetap akurat
+      for (const [memberId, memberAmount] of entries) {
+        const label = itemName
+          ? `${itemName} (${members.find(m => String(m.id) === String(memberId))?.name || ''})`
+          : members.find(m => String(m.id) === String(memberId))?.name || 'Pengeluaran';
+        await api.addTransaction({
+          activity_id: activityId,
+          paid_by_member_id: paidById,
+          amount: Number(memberAmount),
+          item_name: label,
+          involved_member_ids: [memberId]
+        });
+      }
+      setPaidById('');
+      setItemName('');
+      setAdvancedAmounts({});
+      await fetchData();
+      toast(`Berhasil menyimpan ${entries.length} pengeluaran!`, 'success');
     } catch (err) {
       toast("Terjadi kesalahan koneksi.", "error");
       console.error(err);
@@ -314,6 +356,7 @@ export default function UserView() {
     setAmount('');
     setItemName('');
     setInvolvedMemberIds([]);
+    setAdvancedAmounts({});
   };
 
   const saveEditTransaction = async () => {
@@ -471,6 +514,30 @@ export default function UserView() {
             <h2 className="card-title">
               {editingTransactionId ? 'Edit Pengeluaran' : 'Catat Pengeluaran Baru'}
             </h2>
+
+            {/* Mode tabs — only show when not editing */}
+            {!editingTransactionId && (
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', background: 'var(--background)', borderRadius: '8px', padding: '4px' }}>
+                <button
+                  onClick={() => setInputMode('simple')}
+                  style={{
+                    flex: 1, padding: '0.4rem 0.75rem', fontSize: '0.8rem', fontWeight: 600,
+                    borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s',
+                    background: inputMode === 'simple' ? 'var(--primary)' : 'transparent',
+                    color: inputMode === 'simple' ? '#fff' : 'var(--text-muted)'
+                  }}
+                >Bagi Rata</button>
+                <button
+                  onClick={() => setInputMode('advanced')}
+                  style={{
+                    flex: 1, padding: '0.4rem 0.75rem', fontSize: '0.8rem', fontWeight: 600,
+                    borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s',
+                    background: inputMode === 'advanced' ? 'var(--primary)' : 'transparent',
+                    color: inputMode === 'advanced' ? '#fff' : 'var(--text-muted)'
+                  }}
+                >✦ Custom per Orang</button>
+              </div>
+            )}
             
             <div className="form-group">
               <label className="form-label">Nama Barang / Pengeluaran (Opsional)</label>
@@ -490,38 +557,81 @@ export default function UserView() {
                 {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
             </div>
-            
-            <div className="form-group">
-              <label className="form-label">Berapa totalnya? (Rp)</label>
-              <input 
-                type="number" 
-                value={amount} 
-                onChange={(e) => setAmount(e.target.value)}
-                className="form-control" 
-                placeholder="0" 
-              />
-            </div>
-            
-            <div className="form-group">
-              <label className="form-label mb-2">Siapa saja yang ikut patungan?</label>
-              <div className="mb-2" style={{ display: 'flex', gap: '0.5rem' }}>
-                <button onClick={selectAllMembers} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>Pilih Semua</button>
-                <button onClick={clearMembers} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>Bersihkan</button>
+
+            {/* ── SIMPLE MODE ── */}
+            {(inputMode === 'simple' || editingTransactionId) && (
+              <>
+                <div className="form-group">
+                  <label className="form-label">Berapa totalnya? (Rp)</label>
+                  <input 
+                    type="number" 
+                    value={amount} 
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="form-control" 
+                    placeholder="0" 
+                  />
+                </div>
+                
+                <div className="form-group">
+                  <label className="form-label mb-2">Siapa saja yang ikut patungan?</label>
+                  <div className="mb-2" style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button onClick={selectAllMembers} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>Pilih Semua</button>
+                    <button onClick={clearMembers} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>Bersihkan</button>
+                  </div>
+                  <div className="checkbox-grid">
+                    {members.map(m => (
+                      <label key={m.id} className="toggle-switch">
+                        <input 
+                          type="checkbox" 
+                          checked={involvedMemberIds.includes(m.id)} 
+                          onChange={() => toggleMemberInvolved(m.id)}
+                        />
+                        <span className="toggle-slider"></span>
+                        <span className="toggle-label">{m.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ── ADVANCED MODE ── */}
+            {inputMode === 'advanced' && !editingTransactionId && (
+              <div className="form-group">
+                <label className="form-label mb-2">Nominal per orang (Rp)</label>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem', marginTop: '-0.25rem' }}>
+                  Kosongkan atau isi 0 jika orang tersebut tidak ikut.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  {members.map(m => (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <span style={{ flex: '0 0 110px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>{m.name}</span>
+                      <div style={{ position: 'relative', flex: 1 }}>
+                        <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-muted)', pointerEvents: 'none' }}>Rp</span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={advancedAmounts[m.id] || ''}
+                          onChange={(e) => setAdvancedAmounts(prev => ({ ...prev, [m.id]: e.target.value }))}
+                          className="form-control"
+                          placeholder="0"
+                          style={{ paddingLeft: '32px' }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Live total */}
+                {Object.values(advancedAmounts).some(v => Number(v) > 0) && (
+                  <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: 'var(--background)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Total yang dibayar:</span>
+                    <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: '1rem' }}>
+                      {formatRupiah(Object.values(advancedAmounts).reduce((s, v) => s + Number(v || 0), 0))}
+                    </span>
+                  </div>
+                )}
               </div>
-              <div className="checkbox-grid">
-                {members.map(m => (
-                  <label key={m.id} className="toggle-switch">
-                    <input 
-                      type="checkbox" 
-                      checked={involvedMemberIds.includes(m.id)} 
-                      onChange={() => toggleMemberInvolved(m.id)}
-                    />
-                    <span className="toggle-slider"></span>
-                    <span className="toggle-label">{m.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
+            )}
             
             {editingTransactionId ? (
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem' }}>
@@ -531,7 +641,11 @@ export default function UserView() {
                 <button onClick={cancelEditTransaction} className="btn btn-secondary">Batal</button>
               </div>
             ) : (
-              <button onClick={submitTransaction} className="btn btn-primary btn-block mt-4" disabled={isSubmitting || activity?.status !== 'active'}>
+              <button
+                onClick={inputMode === 'advanced' ? submitAdvancedTransaction : submitTransaction}
+                className="btn btn-primary btn-block mt-4"
+                disabled={isSubmitting || activity?.status !== 'active'}
+              >
                 <Save size={20} /> {isSubmitting ? 'Menyimpan...' : 'Simpan Pengeluaran'}
               </button>
             )}
