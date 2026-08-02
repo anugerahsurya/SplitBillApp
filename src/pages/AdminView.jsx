@@ -321,13 +321,59 @@ export default function AdminView() {
         med      : '#4A6A4A',
         sage     : '#5A7A58',
         empty    : '#7C9A7A',
+        xferBg   : '#FFF8E7',
+        xferHdr  : '#C97D20',
+        xferAmt  : '#B85C00',
       };
+
+      // ── Hitung settlement (siapa bayar ke siapa) ──
+      const balances = {};
+      members.forEach(m => { balances[m.id] = 0; });
+      transactions.forEach(t => {
+        const involvedStr = t.involved_member_ids;
+        let involvedIds = [];
+        if (typeof involvedStr === 'string' && involvedStr.trim() !== '') {
+          involvedIds = involvedStr.split(',').map(s => s.trim()).filter(s => s);
+        } else if (Array.isArray(involvedStr)) {
+          involvedIds = involvedStr;
+        }
+        if (involvedIds.length === 0) return;
+        const split = Number(t.amount) / involvedIds.length;
+        if (balances[t.paid_by_member_id] !== undefined) balances[t.paid_by_member_id] += Number(t.amount);
+        involvedIds.forEach(id => { if (balances[id] !== undefined) balances[id] -= split; });
+      });
+
+      let debtors   = [];
+      let creditors = [];
+      for (const [id, bal] of Object.entries(balances)) {
+        if (bal < -0.01) debtors.push({ id, amount: Math.abs(bal) });
+        else if (bal > 0.01) creditors.push({ id, amount: bal });
+      }
+      debtors.sort((a, b) => b.amount - a.amount);
+      creditors.sort((a, b) => b.amount - a.amount);
+
+      const allTransfers = [];
+      const d = debtors.map(x => ({ ...x }));
+      const cr = creditors.map(x => ({ ...x }));
+      let i = 0, j = 0;
+      while (i < d.length && j < cr.length) {
+        const min = Math.min(d[i].amount, cr[j].amount);
+        allTransfers.push({ fromId: d[i].id, toId: cr[j].id, amount: min });
+        d[i].amount -= min; cr[j].amount -= min;
+        if (d[i].amount < 0.01) i++;
+        if (cr[j].amount < 0.01) j++;
+      }
 
       for (const member of members) {
         const items   = memberExpenses[member.id] || [];
         const total   = items.reduce((s, i) => s + i.amount, 0);
         const numRows = Math.max(items.length, 1);
-        const H       = TITLE_H + HDR_H + numRows * ROW_H + FOOT_H + BOTTOM_H;
+
+        const myTransfers = allTransfers.filter(t => String(t.fromId) === String(member.id));
+        const XFER_HDR_H  = 40;
+        const XFER_ROW_H  = 38;
+        const xferRows    = Math.max(myTransfers.length, 1);
+        const H = TITLE_H + HDR_H + numRows * ROW_H + FOOT_H + XFER_HDR_H + xferRows * XFER_ROW_H + BOTTOM_H;
 
         const canvas  = document.createElement('canvas');
         canvas.width  = W * DPR;
@@ -391,14 +437,41 @@ export default function AdminView() {
         text('TOTAL', PAD, ty + FOOT_H / 2 + 6, `bold 14px ${FONT}`, C.sage);
         text(formatRupiah(total), W - PAD, ty + FOOT_H / 2 + 6, `bold 15px ${FONT}`, C.sage, 'right');
 
-        // ── 5. WATERMARK ──
-        const wy = ty + FOOT_H;
+        // ── 5. SECTION TRANSFER ──
+        const xhY = ty + FOOT_H;
+        rect(0, xhY, W, XFER_HDR_H, C.xferBg);
+        line(0, xhY, W, xhY, '#E5C47A', 1.5);
+        text('💸  Transfer ke', PAD, xhY + XFER_HDR_H / 2 + 5, `bold 13px ${FONT}`, C.xferHdr);
+
+        if (myTransfers.length === 0) {
+          const eY = xhY + XFER_HDR_H;
+          rect(0, eY, W, XFER_ROW_H, C.white);
+          line(0, eY + XFER_ROW_H, W, eY + XFER_ROW_H, C.border, 0.5);
+          text('Tidak ada transfer — sudah lunas 🎉', W / 2, eY + XFER_ROW_H / 2 + 5, `13px ${FONT}`, C.med, 'center');
+        } else {
+          myTransfers.forEach((xfer, idx) => {
+            const xrY = xhY + XFER_HDR_H + idx * XFER_ROW_H;
+            rect(0, xrY, W, XFER_ROW_H, idx % 2 === 0 ? C.white : '#FFF3D6');
+            line(0, xrY + XFER_ROW_H, W, xrY + XFER_ROW_H, C.border, 0.5);
+            line(COL1, xrY, COL1, xrY + XFER_ROW_H, C.border, 0.5);
+            const toMember = members.find(m => String(m.id) === String(xfer.toId));
+            const toName   = toMember ? toMember.name : '?';
+            const bankInfo = toMember && toMember.bank_name ? ` (${toMember.bank_name})` : '';
+            ctx.font = `13px ${FONT}`;
+            const toLabel  = clip(`→ ${toName}${bankInfo}`, COL1 - PAD * 2);
+            text(toLabel, PAD, xrY + XFER_ROW_H / 2 + 5, `600 13px ${FONT}`, C.dark);
+            text(formatRupiah(xfer.amount), W - PAD, xrY + XFER_ROW_H / 2 + 5, `bold 13px ${FONT}`, C.xferAmt, 'right');
+          });
+        }
+
+        // ── 6. WATERMARK ──
+        const wy = xhY + XFER_HDR_H + xferRows * XFER_ROW_H;
         rect(0, wy, W, BOTTOM_H, C.white);
         line(0, wy, W, wy, C.border, 0.5);
         const dateStr = new Date().toLocaleDateString('id-ID', { dateStyle: 'long' });
         text(`Diekspor dari SplitBill · ${dateStr}`, W / 2, wy + BOTTOM_H / 2 + 5, `11px ${FONT}`, C.med, 'center');
 
-        // ── 6. DOWNLOAD ──
+        // ── 7. DOWNLOAD ──
         const link = document.createElement('a');
         link.download = `pengeluaran_${member.name.replace(/\s+/g, '_')}_${act.name.replace(/\s+/g, '_')}.png`;
         link.href = canvas.toDataURL('image/png');
