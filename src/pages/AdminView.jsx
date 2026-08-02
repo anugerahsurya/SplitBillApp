@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { LogIn, UserPlus, Trash2, PlusCircle, Copy, List, RefreshCw, Edit, Save, Users } from 'lucide-react';
+import { LogIn, UserPlus, Trash2, PlusCircle, Copy, List, RefreshCw, Edit, Save, Users, Download } from 'lucide-react';
 import { useToast } from '../App';
+import { toPng } from 'html-to-image';
 
 export default function AdminView() {
   const toast = useToast();
@@ -26,8 +27,10 @@ export default function AdminView() {
   const [editingActivityId, setEditingActivityId] = useState(null);
   const [editActivityName, setEditActivityName] = useState('');
 
+  const [exportingActivityId, setExportingActivityId] = useState(null);
+
   const checkPassword = () => {
-    if (password === 'adminsurya') {
+    if (password === 'anugerahsurya') {
       setIsLoggedIn(true);
       setLoginError(false);
       fetchActivities();
@@ -254,6 +257,117 @@ export default function AdminView() {
     }
   };
 
+  const formatRupiah = (number) => {
+    if (!number && number !== 0) return 'Rp 0';
+    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
+  };
+
+  const exportExpenses = async (act) => {
+    setExportingActivityId(act.id);
+    try {
+      const res = await api.getActivity(act.id);
+      if (!res.success) {
+        toast('Gagal mengambil data kegiatan', 'error');
+        return;
+      }
+
+      const { members, transactions } = res.data;
+
+      // Calculate per-member expenses
+      const memberExpenses = {};
+      members.forEach(m => { memberExpenses[m.id] = []; });
+      transactions.forEach(t => {
+        const involvedStr = t.involved_member_ids;
+        let involved = [];
+        if (typeof involvedStr === 'string' && involvedStr.trim() !== '') {
+          involved = involvedStr.split(',').map(s => s.trim()).filter(s => s);
+        } else if (Array.isArray(involvedStr)) {
+          involved = involvedStr;
+        }
+        if (involved.length === 0) return;
+        const splitAmt = Number(t.amount) / involved.length;
+        involved.forEach(id => {
+          if (memberExpenses[id] !== undefined) {
+            memberExpenses[id].push({
+              name: t.item_name && t.item_name !== '-' ? t.item_name : 'Pengeluaran',
+              amount: splitAmt
+            });
+          }
+        });
+      });
+
+      for (const member of members) {
+        const items = memberExpenses[member.id] || [];
+        const total = items.reduce((s, i) => s + i.amount, 0);
+
+        // Build HTML node
+        const node = document.createElement('div');
+        node.style.cssText = [
+          'position:fixed', 'left:-9999px', 'top:0',
+          'width:600px', 'background:#F8FAF8',
+          'font-family:\'Plus Jakarta Sans\', \'Segoe UI\', sans-serif',
+          'border:1.5px solid #D4E4D4', 'border-radius:12px', 'overflow:hidden'
+        ].join(';');
+
+        node.innerHTML = `
+          <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+          <div style="background:#5A7A58;padding:22px 28px 18px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:6px">${act.name}</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.82)">Rincian Pengeluaran: ${member.name}</div>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="background:#7C9A7A">
+                <th style="padding:14px 18px;text-align:left;font-size:13px;font-weight:700;color:#fff">Nama Pengeluaran</th>
+                <th style="padding:14px 18px;text-align:right;font-size:13px;font-weight:700;color:#fff;border-left:1px solid rgba(255,255,255,0.25)">Jumlah</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.length === 0
+                ? `<tr><td colspan="2" style="padding:18px;text-align:center;color:#4A6A4A;font-size:13px">Tidak ada pengeluaran</td></tr>`
+                : items.map((item, idx) => `
+                  <tr style="background:${idx % 2 === 0 ? '#fff' : '#EFF6EF'}">
+                    <td style="padding:12px 18px;font-size:13px;color:#1A2E1A;border-bottom:1px solid #D4E4D4">${item.name}</td>
+                    <td style="padding:12px 18px;text-align:right;font-size:13px;color:#1A2E1A;border-bottom:1px solid #D4E4D4;border-left:1px solid #D4E4D4">${formatRupiah(item.amount)}</td>
+                  </tr>`).join('')
+              }
+            </tbody>
+            <tfoot>
+              <tr style="background:#E8F4E8;border-top:2px solid #7C9A7A">
+                <td style="padding:15px 18px;font-size:14px;font-weight:700;color:#5A7A58">TOTAL</td>
+                <td style="padding:15px 18px;text-align:right;font-size:15px;font-weight:700;color:#5A7A58;border-left:1px solid #D4E4D4">${formatRupiah(total)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <div style="padding:14px 18px;text-align:center;font-size:11px;color:#4A6A4A;background:#fff;border-top:1px solid #D4E4D4">
+            Diekspor dari SplitBill &middot; ${new Date().toLocaleDateString('id-ID', { dateStyle: 'long' })}
+          </div>
+        `;
+
+        document.body.appendChild(node);
+        // Wait a tick for fonts/layout
+        await new Promise(r => setTimeout(r, 200));
+
+        const dataUrl = await toPng(node, { pixelRatio: 2, cacheBust: true });
+        document.body.removeChild(node);
+
+        const link = document.createElement('a');
+        link.download = `pengeluaran_${member.name.replace(/\s+/g, '_')}_${act.name.replace(/\s+/g, '_')}.png`;
+        link.href = dataUrl;
+        link.click();
+
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      toast(`Berhasil mengekspor ${members.length} file!`, 'success');
+    } catch (err) {
+      console.error(err);
+      toast('Gagal mengekspor pengeluaran', 'error');
+    } finally {
+      setExportingActivityId(null);
+    }
+  };
+
   const copyLink = () => {
     navigator.clipboard.writeText(generatedLink);
     toast("Link disalin!", "success");
@@ -340,6 +454,15 @@ export default function AdminView() {
                     <div className="activity-actions">
                       <button onClick={() => copyActivityLink(act.id)} className="btn btn-secondary btn-sm" title="Copy Link">
                         <Copy size={16} /> Copy Link
+                      </button>
+                      <button
+                        onClick={() => exportExpenses(act)}
+                        className="btn btn-secondary btn-sm"
+                        style={{ color: '#5A7A58' }}
+                        title="Export Pengeluaran per Orang"
+                        disabled={exportingActivityId === act.id}
+                      >
+                        <Download size={16} /> {exportingActivityId === act.id ? 'Mengekspor...' : 'Export Pengeluaran'}
                       </button>
                       <div className="activity-actions-row">
                         <button onClick={() => manageMembers(act.id)} className="btn btn-secondary btn-sm" style={{ color: 'var(--primary)' }} title="Kelola Anggota">
