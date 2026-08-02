@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { LogIn, UserPlus, Trash2, PlusCircle, Copy, List, RefreshCw, Edit, Save, Users, Download } from 'lucide-react';
 import { useToast } from '../App';
-import { toPng } from 'html-to-image';
 
 export default function AdminView() {
   const toast = useToast();
@@ -273,7 +272,7 @@ export default function AdminView() {
 
       const { members, transactions } = res.data;
 
-      // Calculate per-member expenses
+      // Hitung pengeluaran per anggota
       const memberExpenses = {};
       members.forEach(m => { memberExpenses[m.id] = []; });
       transactions.forEach(t => {
@@ -296,64 +295,113 @@ export default function AdminView() {
         });
       });
 
+      // ── Konstanta desain ──
+      const DPR       = 2;          // retina
+      const W         = 560;        // lebar canvas (logical px)
+      const PAD       = 28;         // padding kiri-kanan tabel
+      const COL1      = 360;        // lebar kolom item
+      const COL2      = W - COL1;   // lebar kolom nominal
+      const ROW_H     = 42;
+      const HDR_H     = 48;         // header tabel
+      const TITLE_H   = 76;         // blok judul
+      const FOOT_H    = 48;         // baris total
+      const BOTTOM_H  = 40;         // watermark
+      const FONT      = `'Segoe UI', Arial, sans-serif`;
+
+      // Warna
+      const C = {
+        titleBg  : '#5A7A58',
+        hdrBg    : '#7C9A7A',
+        totBg    : '#E8F4E8',
+        rowEven  : '#FFFFFF',
+        rowOdd   : '#EFF6EF',
+        border   : '#D4E4D4',
+        white    : '#FFFFFF',
+        dark     : '#1A2E1A',
+        med      : '#4A6A4A',
+        sage     : '#5A7A58',
+        empty    : '#7C9A7A',
+      };
+
       for (const member of members) {
-        const items = memberExpenses[member.id] || [];
-        const total = items.reduce((s, i) => s + i.amount, 0);
+        const items   = memberExpenses[member.id] || [];
+        const total   = items.reduce((s, i) => s + i.amount, 0);
+        const numRows = Math.max(items.length, 1);
+        const H       = TITLE_H + HDR_H + numRows * ROW_H + FOOT_H + BOTTOM_H;
 
-        // Build HTML node
-        const node = document.createElement('div');
-        node.style.cssText = [
-          'position:fixed', 'left:-9999px', 'top:0',
-          'width:600px', 'background:#F8FAF8',
-          'font-family:\'Plus Jakarta Sans\', \'Segoe UI\', sans-serif',
-          'border:1.5px solid #D4E4D4', 'border-radius:12px', 'overflow:hidden'
-        ].join(';');
+        const canvas  = document.createElement('canvas');
+        canvas.width  = W * DPR;
+        canvas.height = H * DPR;
+        const ctx     = canvas.getContext('2d');
+        ctx.scale(DPR, DPR);
 
-        node.innerHTML = `
-          <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-          <div style="background:#5A7A58;padding:22px 28px 18px;text-align:center">
-            <div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:6px">${act.name}</div>
-            <div style="font-size:12px;color:rgba(255,255,255,0.82)">Rincian Pengeluaran: ${member.name}</div>
-          </div>
-          <table style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr style="background:#7C9A7A">
-                <th style="padding:14px 18px;text-align:left;font-size:13px;font-weight:700;color:#fff">Nama Pengeluaran</th>
-                <th style="padding:14px 18px;text-align:right;font-size:13px;font-weight:700;color:#fff;border-left:1px solid rgba(255,255,255,0.25)">Jumlah</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${items.length === 0
-                ? `<tr><td colspan="2" style="padding:18px;text-align:center;color:#4A6A4A;font-size:13px">Tidak ada pengeluaran</td></tr>`
-                : items.map((item, idx) => `
-                  <tr style="background:${idx % 2 === 0 ? '#fff' : '#EFF6EF'}">
-                    <td style="padding:12px 18px;font-size:13px;color:#1A2E1A;border-bottom:1px solid #D4E4D4">${item.name}</td>
-                    <td style="padding:12px 18px;text-align:right;font-size:13px;color:#1A2E1A;border-bottom:1px solid #D4E4D4;border-left:1px solid #D4E4D4">${formatRupiah(item.amount)}</td>
-                  </tr>`).join('')
-              }
-            </tbody>
-            <tfoot>
-              <tr style="background:#E8F4E8;border-top:2px solid #7C9A7A">
-                <td style="padding:15px 18px;font-size:14px;font-weight:700;color:#5A7A58">TOTAL</td>
-                <td style="padding:15px 18px;text-align:right;font-size:15px;font-weight:700;color:#5A7A58;border-left:1px solid #D4E4D4">${formatRupiah(total)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <div style="padding:14px 18px;text-align:center;font-size:11px;color:#4A6A4A;background:#fff;border-top:1px solid #D4E4D4">
-            Diekspor dari SplitBill &middot; ${new Date().toLocaleDateString('id-ID', { dateStyle: 'long' })}
-          </div>
-        `;
+        // ── helper ──
+        const rect = (x, y, w, h, color) => { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); };
+        const line = (x1, y1, x2, y2, color, lw = 1) => {
+          ctx.strokeStyle = color; ctx.lineWidth = lw;
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        };
+        const text = (t, x, y, font, color, align = 'left') => {
+          ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align;
+          ctx.fillText(t, x, y);
+        };
+        // Truncate teks supaya tidak meluber
+        const clip = (t, maxW) => {
+          if (ctx.measureText(t).width <= maxW) return t;
+          while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+          return t + '…';
+        };
 
-        document.body.appendChild(node);
-        // Wait a tick for fonts/layout
-        await new Promise(r => setTimeout(r, 200));
+        // ── 1. BLOK JUDUL ──
+        rect(0, 0, W, TITLE_H, C.titleBg);
+        text(act.name, W / 2, 30, `bold 16px ${FONT}`, C.white, 'center');
+        text(`Rincian Pengeluaran: ${member.name}`, W / 2, 52, `13px ${FONT}`, 'rgba(255,255,255,0.85)', 'center');
 
-        const dataUrl = await toPng(node, { pixelRatio: 2, cacheBust: true });
-        document.body.removeChild(node);
+        // ── 2. HEADER TABEL ──
+        const hy = TITLE_H;
+        rect(0, hy, W, HDR_H, C.hdrBg);
+        text('Nama Pengeluaran', PAD, hy + HDR_H / 2 + 5, `bold 13px ${FONT}`, C.white);
+        text('Jumlah', W - PAD, hy + HDR_H / 2 + 5, `bold 13px ${FONT}`, C.white, 'right');
+        line(COL1, hy, COL1, hy + HDR_H, 'rgba(255,255,255,0.3)');
 
+        // ── 3. BARIS DATA ──
+        const bodyY = TITLE_H + HDR_H;
+        if (items.length === 0) {
+          rect(0, bodyY, W, ROW_H, C.rowOdd);
+          text('Tidak ada pengeluaran', W / 2, bodyY + ROW_H / 2 + 5, `13px ${FONT}`, C.med, 'center');
+        } else {
+          items.forEach((item, idx) => {
+            const ry = bodyY + idx * ROW_H;
+            rect(0, ry, W, ROW_H, idx % 2 === 0 ? C.rowEven : C.rowOdd);
+            line(0, ry + ROW_H, W, ry + ROW_H, C.border, 0.5);
+            line(COL1, ry, COL1, ry + ROW_H, C.border, 0.5);
+
+            ctx.font = `13px ${FONT}`;
+            const label = clip(item.name, COL1 - PAD * 2);
+            text(label, PAD, ry + ROW_H / 2 + 5, `13px ${FONT}`, C.dark);
+            text(formatRupiah(item.amount), W - PAD, ry + ROW_H / 2 + 5, `13px ${FONT}`, C.dark, 'right');
+          });
+        }
+
+        // ── 4. BARIS TOTAL ──
+        const ty = bodyY + numRows * ROW_H;
+        rect(0, ty, W, FOOT_H, C.totBg);
+        line(0, ty, W, ty, C.hdrBg, 2);
+        line(COL1, ty, COL1, ty + FOOT_H, C.border, 0.5);
+        text('TOTAL', PAD, ty + FOOT_H / 2 + 6, `bold 14px ${FONT}`, C.sage);
+        text(formatRupiah(total), W - PAD, ty + FOOT_H / 2 + 6, `bold 15px ${FONT}`, C.sage, 'right');
+
+        // ── 5. WATERMARK ──
+        const wy = ty + FOOT_H;
+        rect(0, wy, W, BOTTOM_H, C.white);
+        line(0, wy, W, wy, C.border, 0.5);
+        const dateStr = new Date().toLocaleDateString('id-ID', { dateStyle: 'long' });
+        text(`Diekspor dari SplitBill · ${dateStr}`, W / 2, wy + BOTTOM_H / 2 + 5, `11px ${FONT}`, C.med, 'center');
+
+        // ── 6. DOWNLOAD ──
         const link = document.createElement('a');
         link.download = `pengeluaran_${member.name.replace(/\s+/g, '_')}_${act.name.replace(/\s+/g, '_')}.png`;
-        link.href = dataUrl;
+        link.href = canvas.toDataURL('image/png');
         link.click();
 
         await new Promise(r => setTimeout(r, 300));
