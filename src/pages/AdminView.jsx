@@ -1,771 +1,859 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  CheckCircle2,
+  Copy,
+  Download,
+  Layers,
+  LayoutList,
+  Link2,
+  LogIn,
+  Pencil,
+  PlusCircle,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  Trash2,
+  UserPlus,
+  Users,
+  X,
+} from 'lucide-react';
 import { api } from '../services/api';
-import { LogIn, UserPlus, Trash2, PlusCircle, Copy, List, RefreshCw, Edit, Save, Users, Download } from 'lucide-react';
-import { useToast } from '../App';
+import { buildLedger, recapFor } from '../lib/split.js';
+import { formatDate, formatRupiah } from '../lib/money.js';
+import { copyText } from '../lib/clipboard.js';
+import {
+  canvasToBlob,
+  downloadCanvas,
+  renderReceipt,
+  safeFileName,
+  stackCanvases,
+  waitForFonts,
+} from '../lib/receipt.js';
+import { useToast } from '../components/Toaster';
+import { useConfirm } from '../components/Confirm';
+import { Sheet } from '../components/Sheet';
+import { Empty, Segmented, Skeleton } from '../components/ui';
+
+const ADMIN_PASSWORD = import.meta.env?.VITE_ADMIN_PASSWORD || 'anugerahsurya';
+const SESSION_KEY = 'splitbill-admin';
+
+const TABS = [
+  { value: 'dashboard', label: 'Kegiatan', icon: <LayoutList size={14} /> },
+  { value: 'create', label: 'Buat Baru', icon: <PlusCircle size={14} /> },
+];
+
+const emptyMember = () => ({ name: '', bank_name: '', bank_account: '' });
 
 export default function AdminView() {
   const toast = useToast();
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const confirm = useConfirm();
+
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    try {
+      return sessionStorage.getItem(SESSION_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState(false);
 
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [allActivities, setAllActivities] = useState([]);
-  const [isLoadingActivities, setIsLoadingActivities] = useState(false);
+  const [tab, setTab] = useState('dashboard');
+  const [activities, setActivities] = useState([]);
+  const [isLoadingList, setIsLoadingList] = useState(false);
 
-  const [activityName, setActivityName] = useState('');
-  const [members, setMembers] = useState([{ name: '', bank_name: '', bank_account: '' }]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [generatedLink, setGeneratedLink] = useState('');
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [busyId, setBusyId] = useState(null);
 
-  const [manageMembersActivityId, setManageMembersActivityId] = useState(null);
-  const [membersToManage, setMembersToManage] = useState([]);
+  const [openMembersFor, setOpenMembersFor] = useState(null);
+  const [memberCache, setMemberCache] = useState({});
+  const [draftMember, setDraftMember] = useState(emptyMember());
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
-  const [newMember, setNewMember] = useState({ name: '', bank_name: '', bank_account: '' });
 
-  const [editingActivityId, setEditingActivityId] = useState(null);
-  const [editActivityName, setEditActivityName] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newMembers, setNewMembers] = useState([emptyMember()]);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createdLink, setCreatedLink] = useState('');
 
-  const [exportingActivityId, setExportingActivityId] = useState(null);
+  const [exportState, setExportState] = useState(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const exportUrls = useRef([]);
 
-  const checkPassword = () => {
-    if (password === 'anugerahsurya') {
-      setIsLoggedIn(true);
-      setLoginError(false);
-      fetchActivities();
-    } else {
-      setLoginError(true);
-    }
-  };
-
-  const fetchActivities = async () => {
-    setIsLoadingActivities(true);
+  const fetchActivities = useCallback(async () => {
+    setIsLoadingList(true);
     try {
       const res = await api.getAllActivities();
-      if (res.success) {
-        setAllActivities(res.data);
-      }
+      setActivities(res.data ?? []);
     } catch (err) {
-      console.error(err);
+      toast(`Gagal memuat kegiatan: ${err.message}`, 'error');
     } finally {
-      setIsLoadingActivities(false);
+      setIsLoadingList(false);
     }
-  };
+  }, [toast]);
 
-  const startEdit = (act) => {
-    setEditingActivityId(act.id);
-    setEditActivityName(act.name);
-  };
+  useEffect(() => {
+    if (isLoggedIn) fetchActivities();
+  }, [isLoggedIn, fetchActivities]);
 
-  const cancelEdit = () => {
-    setEditingActivityId(null);
-    setEditActivityName('');
-  };
+  useEffect(
+    () => () => {
+      exportUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    },
+    [],
+  );
 
-  const saveEdit = async () => {
-    if (!editActivityName.trim()) {
-      toast('Nama kegiatan tidak boleh kosong', 'error');
+  const login = () => {
+    if (password !== ADMIN_PASSWORD) {
+      setLoginError(true);
       return;
     }
-    
     try {
-      const res = await api.editActivity(editingActivityId, editActivityName);
-      if (res.success) {
-        await fetchActivities();
-        cancelEdit();
-        toast('Berhasil menyimpan kegiatan!', 'success');
-      } else {
-        toast('Gagal mengedit kegiatan: ' + (res.error || 'Unknown error'), 'error');
-      }
+      sessionStorage.setItem(SESSION_KEY, '1');
+    } catch {
+      /* mode privat: login berlaku sampai halaman ditutup */
+    }
+    setIsLoggedIn(true);
+    setLoginError(false);
+    setPassword('');
+  };
+
+  const logout = () => {
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+    } catch {
+      /* abaikan */
+    }
+    setIsLoggedIn(false);
+  };
+
+  // ── Kegiatan ──
+  const saveRename = async () => {
+    const name = renameValue.trim();
+    if (!name) return toast('Nama kegiatan tidak boleh kosong.', 'error');
+
+    setBusyId(renamingId);
+    try {
+      await api.editActivity(renamingId, name);
+      setActivities((prev) => prev.map((a) => (a.id === renamingId ? { ...a, name } : a)));
+      setRenamingId(null);
+      toast('Nama kegiatan diperbarui.');
     } catch (err) {
-      toast('Terjadi kesalahan koneksi saat menyimpan.', 'error');
+      toast(`Gagal menyimpan: ${err.message}`, 'error');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const deleteActivityItem = async (id) => {
-    if (window.confirm('Yakin ingin menghapus kegiatan ini? Semua data terkait (anggota, transaksi) akan ikut terhapus.')) {
-      try {
-        const res = await api.deleteActivity(id);
-        if (res.success) {
-          toast('Kegiatan berhasil dihapus!', 'success');
-          await fetchActivities();
-        } else {
-          toast('Gagal menghapus kegiatan: ' + (res.error || 'Unknown error'), 'error');
-        }
-      } catch (err) {
-        toast('Terjadi kesalahan koneksi.', 'error');
-      }
+  const finishActivity = async (act) => {
+    const ok = await confirm({
+      title: 'Tandai selesai?',
+      message: `Peserta tidak bisa lagi menambah pengeluaran di "${act.name}". Tagihan yang sudah ada tetap bisa dilihat.`,
+      confirmText: 'Tandai selesai',
+      tone: 'warn',
+    });
+    if (!ok) return;
+
+    setBusyId(act.id);
+    try {
+      await api.finishActivity(act.id);
+      setActivities((prev) => prev.map((a) => (a.id === act.id ? { ...a, status: 'finished' } : a)));
+      toast('Kegiatan ditandai selesai.');
+    } catch (err) {
+      toast(`Gagal menandai: ${err.message}`, 'error');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const copyActivityLink = (id) => {
-    const baseUrl = window.location.origin;
-    navigator.clipboard.writeText(`${baseUrl}/?id=${id}`);
-    toast("Link disalin!", "success");
+  const removeActivity = async (act) => {
+    const ok = await confirm({
+      title: 'Hapus kegiatan?',
+      message: `"${act.name}" beserta seluruh anggota dan pengeluarannya akan hilang permanen.`,
+      confirmText: 'Hapus permanen',
+    });
+    if (!ok) return;
+
+    setBusyId(act.id);
+    try {
+      await api.deleteActivity(act.id);
+      setActivities((prev) => prev.filter((a) => a.id !== act.id));
+      toast('Kegiatan dihapus.');
+    } catch (err) {
+      toast(`Gagal menghapus: ${err.message}`, 'error');
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const manageMembers = async (activityId) => {
-    if (manageMembersActivityId === activityId) {
-      setManageMembersActivityId(null);
+  const shareLink = (id) => `${window.location.origin}/?id=${id}`;
+
+  const copyShareLink = async (id) => {
+    const ok = await copyText(shareLink(id));
+    toast(ok ? 'Link disalin.' : 'Tidak bisa menyalin otomatis.', ok ? 'success' : 'error');
+  };
+
+  // ── Anggota ──
+  const toggleMembers = async (activityId) => {
+    if (openMembersFor === activityId) {
+      setOpenMembersFor(null);
       return;
     }
-    setManageMembersActivityId(activityId);
+    setOpenMembersFor(activityId);
+    setDraftMember(emptyMember());
+
+    // Sudah pernah dibuka? Pakai yang tersimpan, jangan panggil server lagi.
+    if (memberCache[activityId]) return;
+
     setIsLoadingMembers(true);
     try {
       const res = await api.getActivity(activityId);
-      if (res.success) {
-        setMembersToManage(res.data.members);
-      }
+      setMemberCache((prev) => ({ ...prev, [activityId]: res.data.members ?? [] }));
     } catch (err) {
-      console.error(err);
-      toast('Gagal mengambil data anggota', 'error');
+      toast(`Gagal memuat anggota: ${err.message}`, 'error');
+      setOpenMembersFor(null);
     } finally {
       setIsLoadingMembers(false);
     }
   };
 
-  const closeManageMembers = () => {
-    setManageMembersActivityId(null);
-  };
-
-  const handleManageMemberChange = (index, field, value) => {
-    const newMembers = [...membersToManage];
-    newMembers[index][field] = value;
-    setMembersToManage(newMembers);
-  };
+  const patchMember = (activityId, index, field, value) =>
+    setMemberCache((prev) => ({
+      ...prev,
+      [activityId]: prev[activityId].map((m, i) => (i === index ? { ...m, [field]: value } : m)),
+    }));
 
   const saveMember = async (member) => {
+    if (!member.name?.trim()) return toast('Nama anggota tidak boleh kosong.', 'error');
+    setBusyId(member.id);
     try {
-      const res = await api.editMember({
+      await api.editMember({
         member_id: member.id,
         name: member.name,
         bank_name: member.bank_name,
-        bank_account: member.bank_account
+        bank_account: member.bank_account,
       });
-      if (res.success) {
-        toast('Berhasil menyimpan perubahan anggota', 'success');
-      } else {
-        toast('Gagal menyimpan: ' + (res.error || 'Unknown error'), 'error');
-      }
+      toast(`Data ${member.name} disimpan.`);
     } catch (err) {
-      toast('Terjadi kesalahan koneksi', 'error');
+      toast(`Gagal menyimpan: ${err.message}`, 'error');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const removeExistingMember = async (member, index) => {
-    if (!window.confirm(`Yakin ingin menghapus anggota ${member.name}?`)) return;
-    
+  const removeMember = async (activityId, member) => {
+    const ok = await confirm({
+      title: `Hapus ${member.name}?`,
+      message:
+        'Pengeluaran yang sudah mencantumkan orang ini akan dibagi ulang ke peserta yang tersisa, jadi tagihan tetap seimbang.',
+      confirmText: 'Hapus anggota',
+    });
+    if (!ok) return;
+
+    setBusyId(member.id);
     try {
-      const res = await api.deleteMember(member.id);
-      if (res.success) {
-        const newMembers = [...membersToManage];
-        newMembers.splice(index, 1);
-        setMembersToManage(newMembers);
-        toast('Anggota berhasil dihapus', 'success');
-      } else {
-        toast('Gagal menghapus: ' + (res.error || 'Unknown error'), 'error');
-      }
+      await api.deleteMember(member.id);
+      setMemberCache((prev) => ({
+        ...prev,
+        [activityId]: prev[activityId].filter((m) => m.id !== member.id),
+      }));
+      toast('Anggota dihapus.');
     } catch (err) {
-      toast('Terjadi kesalahan koneksi', 'error');
+      toast(`Gagal menghapus: ${err.message}`, 'error');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const addNewMember = async () => {
-    if (!newMember.name.trim()) return;
-    
+  const addMember = async (activityId) => {
+    if (!draftMember.name.trim()) return;
+    setBusyId(`add-${activityId}`);
     try {
-      const res = await api.addMember({
-        activity_id: manageMembersActivityId,
-        name: newMember.name,
-        bank_name: newMember.bank_name,
-        bank_account: newMember.bank_account
-      });
-      
-      if (res.success) {
-        setMembersToManage([
-          ...membersToManage,
-          {
-            id: res.id,
-            activity_id: manageMembersActivityId,
-            name: newMember.name,
-            bank_name: newMember.bank_name,
-            bank_account: newMember.bank_account
-          }
-        ]);
-        setNewMember({ name: '', bank_name: '', bank_account: '' });
-        toast('Berhasil menambah anggota', 'success');
-      } else {
-        toast('Gagal menambah anggota: ' + (res.error || 'Unknown error'), 'error');
-      }
+      const res = await api.addMember({ activity_id: activityId, ...draftMember });
+      setMemberCache((prev) => ({
+        ...prev,
+        [activityId]: [...(prev[activityId] ?? []), { id: res.id, activity_id: activityId, ...draftMember }],
+      }));
+      setDraftMember(emptyMember());
+      toast('Anggota ditambahkan.');
     } catch (err) {
-      toast('Terjadi kesalahan koneksi', 'error');
+      toast(`Gagal menambah: ${err.message}`, 'error');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    return new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
-  };
-
-  const addMember = () => {
-    setMembers([...members, { name: '', bank_name: '', bank_account: '' }]);
-  };
-
-  const removeMember = (index) => {
-    if (members.length > 1) {
-      const newMembers = [...members];
-      newMembers.splice(index, 1);
-      setMembers(newMembers);
-    }
-  };
-
-  const handleMemberChange = (index, field, value) => {
-    const newMembers = [...members];
-    newMembers[index][field] = value;
-    setMembers(newMembers);
-  };
+  // ── Buat kegiatan ──
+  const filledMembers = useMemo(() => newMembers.filter((m) => m.name.trim()), [newMembers]);
 
   const createActivity = async () => {
-    if (!activityName || members.some((m) => !m.name)) {
-      toast("Mohon lengkapi nama kegiatan dan semua nama anggota.", "error");
-      return;
-    }
+    if (!newName.trim()) return toast('Nama kegiatan belum diisi.', 'error');
+    if (filledMembers.length < 2) return toast('Minimal dua anggota supaya ada yang dibagi.', 'error');
 
-    setIsLoading(true);
+    setIsCreating(true);
     try {
-      const res = await api.createActivity({
-        name: activityName,
-        members: members.filter((m) => m.name.trim() !== '')
-      });
-      
-      if (res.success) {
-        const baseUrl = window.location.origin;
-        setGeneratedLink(`${baseUrl}/?id=${res.id}`);
-        setActivityName('');
-        setMembers([{ name: '', bank_name: '', bank_account: '' }]);
-        toast("Kegiatan berhasil dibuat!", "success");
-      } else {
-        toast("Gagal membuat kegiatan: " + (res.error || "Unknown error"), "error");
-      }
+      const res = await api.createActivity({ name: newName.trim(), members: filledMembers });
+      setCreatedLink(shareLink(res.id));
+      setNewName('');
+      setNewMembers([emptyMember()]);
+      await fetchActivities();
+      toast('Kegiatan dibuat.');
     } catch (err) {
-      toast("Terjadi kesalahan koneksi. Pastikan URL Web App GAS sudah diatur di src/services/api.js", "error");
-      console.error(err);
+      toast(`Gagal membuat kegiatan: ${err.message}`, 'error');
     } finally {
-      setIsLoading(false);
+      setIsCreating(false);
     }
   };
 
-  const formatRupiah = (number) => {
-    if (!number && number !== 0) return 'Rp 0';
-    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
-  };
-
-  const exportExpenses = async (act) => {
-    setExportingActivityId(act.id);
+  // ── Export ──
+  const openExport = async (act) => {
+    setIsExporting(true);
+    setBusyId(act.id);
     try {
       const res = await api.getActivity(act.id);
-      if (!res.success) {
-        toast('Gagal mengambil data kegiatan', 'error');
+      const members = res.data.members ?? [];
+      if (members.length === 0) {
+        toast('Kegiatan ini belum punya anggota.', 'error');
         return;
       }
 
-      const { members, transactions } = res.data;
+      await waitForFonts();
+      const ledger = buildLedger(members, res.data.transactions ?? []);
 
-      // Hitung pengeluaran per anggota
-      const memberExpenses = {};
-      members.forEach(m => { memberExpenses[m.id] = []; });
-      transactions.forEach(t => {
-        const involvedStr = t.involved_member_ids;
-        let involved = [];
-        if (typeof involvedStr === 'string' && involvedStr.trim() !== '') {
-          involved = involvedStr.split(',').map(s => s.trim()).filter(s => s);
-        } else if (Array.isArray(involvedStr)) {
-          involved = involvedStr;
-        }
-        if (involved.length === 0) return;
-        const splitAmt = Number(t.amount) / involved.length;
-        involved.forEach(id => {
-          if (memberExpenses[id] !== undefined) {
-            memberExpenses[id].push({
-              name: t.item_name && t.item_name !== '-' ? t.item_name : 'Pengeluaran',
-              amount: splitAmt
-            });
-          }
-        });
-      });
+      exportUrls.current.forEach((url) => URL.revokeObjectURL(url));
+      exportUrls.current = [];
 
-      // ── Konstanta desain ──
-      const DPR       = 2;          // retina
-      const W         = 560;        // lebar canvas (logical px)
-      const PAD       = 28;         // padding kiri-kanan tabel
-      const COL1      = 360;        // lebar kolom item
-      const COL2      = W - COL1;   // lebar kolom nominal
-      const ROW_H     = 42;
-      const HDR_H     = 48;         // header tabel
-      const TITLE_H   = 76;         // blok judul
-      const FOOT_H    = 48;         // baris total
-      const BOTTOM_H  = 40;         // watermark
-      const FONT      = `'Segoe UI', Arial, sans-serif`;
-
-      // Warna
-      const C = {
-        titleBg  : '#5A7A58',
-        hdrBg    : '#7C9A7A',
-        totBg    : '#E8F4E8',
-        rowEven  : '#FFFFFF',
-        rowOdd   : '#EFF6EF',
-        border   : '#D4E4D4',
-        white    : '#FFFFFF',
-        dark     : '#1A2E1A',
-        med      : '#4A6A4A',
-        sage     : '#5A7A58',
-        empty    : '#7C9A7A',
-        xferBg   : '#FFF8E7',
-        xferHdr  : '#C97D20',
-        xferAmt  : '#B85C00',
-      };
-
-      // ── Hitung settlement (siapa bayar ke siapa) ──
-      const balances = {};
-      members.forEach(m => { balances[m.id] = 0; });
-      transactions.forEach(t => {
-        const involvedStr = t.involved_member_ids;
-        let involvedIds = [];
-        if (typeof involvedStr === 'string' && involvedStr.trim() !== '') {
-          involvedIds = involvedStr.split(',').map(s => s.trim()).filter(s => s);
-        } else if (Array.isArray(involvedStr)) {
-          involvedIds = involvedStr;
-        }
-        if (involvedIds.length === 0) return;
-        const split = Number(t.amount) / involvedIds.length;
-        if (balances[t.paid_by_member_id] !== undefined) balances[t.paid_by_member_id] += Number(t.amount);
-        involvedIds.forEach(id => { if (balances[id] !== undefined) balances[id] -= split; });
-      });
-
-      let debtors   = [];
-      let creditors = [];
-      for (const [id, bal] of Object.entries(balances)) {
-        if (bal < -0.01) debtors.push({ id, amount: Math.abs(bal) });
-        else if (bal > 0.01) creditors.push({ id, amount: bal });
-      }
-      debtors.sort((a, b) => b.amount - a.amount);
-      creditors.sort((a, b) => b.amount - a.amount);
-
-      const allTransfers = [];
-      const d = debtors.map(x => ({ ...x }));
-      const cr = creditors.map(x => ({ ...x }));
-      let i = 0, j = 0;
-      while (i < d.length && j < cr.length) {
-        const min = Math.min(d[i].amount, cr[j].amount);
-        allTransfers.push({ fromId: d[i].id, toId: cr[j].id, amount: min });
-        d[i].amount -= min; cr[j].amount -= min;
-        if (d[i].amount < 0.01) i++;
-        if (cr[j].amount < 0.01) j++;
-      }
-
+      const sheets = [];
       for (const member of members) {
-        const items   = memberExpenses[member.id] || [];
-        const total   = items.reduce((s, i) => s + i.amount, 0);
-        const numRows = Math.max(items.length, 1);
+        const recap = recapFor(ledger, member.id);
+        if (!recap) continue;
 
-        const myTransfers = allTransfers.filter(t => String(t.fromId) === String(member.id));
-        const XFER_HDR_H  = 40;
-        const XFER_ROW_H  = 38;
-        const xferRows    = Math.max(myTransfers.length, 1);
-        const H = TITLE_H + HDR_H + numRows * ROW_H + FOOT_H + XFER_HDR_H + xferRows * XFER_ROW_H + BOTTOM_H;
+        const canvas = renderReceipt({
+          activityName: act.name,
+          memberName: member.name,
+          items: recap.items,
+          total: recap.total,
+          paid: recap.paid,
+          net: recap.net,
+          transfersOut: recap.outgoing,
+          transfersIn: recap.incoming,
+        });
 
-        const canvas  = document.createElement('canvas');
-        canvas.width  = W * DPR;
-        canvas.height = H * DPR;
-        const ctx     = canvas.getContext('2d');
-        ctx.scale(DPR, DPR);
-
-        // ── helper ──
-        const rect = (x, y, w, h, color) => { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); };
-        const line = (x1, y1, x2, y2, color, lw = 1) => {
-          ctx.strokeStyle = color; ctx.lineWidth = lw;
-          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-        };
-        const text = (t, x, y, font, color, align = 'left') => {
-          ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align;
-          ctx.fillText(t, x, y);
-        };
-        // Truncate teks supaya tidak meluber
-        const clip = (t, maxW) => {
-          if (ctx.measureText(t).width <= maxW) return t;
-          while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
-          return t + '…';
-        };
-
-        // ── 1. BLOK JUDUL ──
-        rect(0, 0, W, TITLE_H, C.titleBg);
-        text(act.name, W / 2, 30, `bold 16px ${FONT}`, C.white, 'center');
-        text(`Rincian Pengeluaran: ${member.name}`, W / 2, 52, `13px ${FONT}`, 'rgba(255,255,255,0.85)', 'center');
-
-        // ── 2. HEADER TABEL ──
-        const hy = TITLE_H;
-        rect(0, hy, W, HDR_H, C.hdrBg);
-        text('Nama Pengeluaran', PAD, hy + HDR_H / 2 + 5, `bold 13px ${FONT}`, C.white);
-        text('Jumlah', W - PAD, hy + HDR_H / 2 + 5, `bold 13px ${FONT}`, C.white, 'right');
-        line(COL1, hy, COL1, hy + HDR_H, 'rgba(255,255,255,0.3)');
-
-        // ── 3. BARIS DATA ──
-        const bodyY = TITLE_H + HDR_H;
-        if (items.length === 0) {
-          rect(0, bodyY, W, ROW_H, C.rowOdd);
-          text('Tidak ada pengeluaran', W / 2, bodyY + ROW_H / 2 + 5, `13px ${FONT}`, C.med, 'center');
-        } else {
-          items.forEach((item, idx) => {
-            const ry = bodyY + idx * ROW_H;
-            rect(0, ry, W, ROW_H, idx % 2 === 0 ? C.rowEven : C.rowOdd);
-            line(0, ry + ROW_H, W, ry + ROW_H, C.border, 0.5);
-            line(COL1, ry, COL1, ry + ROW_H, C.border, 0.5);
-
-            ctx.font = `13px ${FONT}`;
-            const label = clip(item.name, COL1 - PAD * 2);
-            text(label, PAD, ry + ROW_H / 2 + 5, `13px ${FONT}`, C.dark);
-            text(formatRupiah(item.amount), W - PAD, ry + ROW_H / 2 + 5, `13px ${FONT}`, C.dark, 'right');
-          });
-        }
-
-        // ── 4. BARIS TOTAL ──
-        const ty = bodyY + numRows * ROW_H;
-        rect(0, ty, W, FOOT_H, C.totBg);
-        line(0, ty, W, ty, C.hdrBg, 2);
-        line(COL1, ty, COL1, ty + FOOT_H, C.border, 0.5);
-        text('TOTAL', PAD, ty + FOOT_H / 2 + 6, `bold 14px ${FONT}`, C.sage);
-        text(formatRupiah(total), W - PAD, ty + FOOT_H / 2 + 6, `bold 15px ${FONT}`, C.sage, 'right');
-
-        // ── 5. SECTION TRANSFER ──
-        const xhY = ty + FOOT_H;
-        rect(0, xhY, W, XFER_HDR_H, C.xferBg);
-        line(0, xhY, W, xhY, '#E5C47A', 1.5);
-        text('💸  Transfer ke', PAD, xhY + XFER_HDR_H / 2 + 5, `bold 13px ${FONT}`, C.xferHdr);
-
-        if (myTransfers.length === 0) {
-          const eY = xhY + XFER_HDR_H;
-          rect(0, eY, W, XFER_ROW_H, C.white);
-          line(0, eY + XFER_ROW_H, W, eY + XFER_ROW_H, C.border, 0.5);
-          text('Tidak ada transfer — sudah lunas 🎉', W / 2, eY + XFER_ROW_H / 2 + 5, `13px ${FONT}`, C.med, 'center');
-        } else {
-          myTransfers.forEach((xfer, idx) => {
-            const xrY = xhY + XFER_HDR_H + idx * XFER_ROW_H;
-            rect(0, xrY, W, XFER_ROW_H, idx % 2 === 0 ? C.white : '#FFF3D6');
-            line(0, xrY + XFER_ROW_H, W, xrY + XFER_ROW_H, C.border, 0.5);
-            line(COL1, xrY, COL1, xrY + XFER_ROW_H, C.border, 0.5);
-            const toMember = members.find(m => String(m.id) === String(xfer.toId));
-            const toName   = toMember ? toMember.name : '?';
-            const bankInfo = toMember && toMember.bank_name ? ` (${toMember.bank_name})` : '';
-            ctx.font = `13px ${FONT}`;
-            const toLabel  = clip(`→ ${toName}${bankInfo}`, COL1 - PAD * 2);
-            text(toLabel, PAD, xrY + XFER_ROW_H / 2 + 5, `600 13px ${FONT}`, C.dark);
-            text(formatRupiah(xfer.amount), W - PAD, xrY + XFER_ROW_H / 2 + 5, `bold 13px ${FONT}`, C.xferAmt, 'right');
-          });
-        }
-
-        // ── 6. WATERMARK ──
-        const wy = xhY + XFER_HDR_H + xferRows * XFER_ROW_H;
-        rect(0, wy, W, BOTTOM_H, C.white);
-        line(0, wy, W, wy, C.border, 0.5);
-        const dateStr = new Date().toLocaleDateString('id-ID', { dateStyle: 'long' });
-        text(`Diekspor dari SplitBill · ${dateStr}`, W / 2, wy + BOTTOM_H / 2 + 5, `11px ${FONT}`, C.med, 'center');
-
-        // ── 7. DOWNLOAD ──
-        const link = document.createElement('a');
-        link.download = `pengeluaran_${member.name.replace(/\s+/g, '_')}_${act.name.replace(/\s+/g, '_')}.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-
-        await new Promise(r => setTimeout(r, 300));
+        const blob = await canvasToBlob(canvas);
+        const url = blob ? URL.createObjectURL(blob) : '';
+        if (url) exportUrls.current.push(url);
+        sheets.push({ name: member.name, total: recap.total, canvas, url });
       }
 
-      toast(`Berhasil mengekspor ${members.length} file!`, 'success');
+      setExportState({ activity: act, sheets, total: ledger.total });
     } catch (err) {
-      console.error(err);
-      toast('Gagal mengekspor pengeluaran', 'error');
+      toast(`Gagal menyiapkan export: ${err.message}`, 'error');
     } finally {
-      setExportingActivityId(null);
+      setIsExporting(false);
+      setBusyId(null);
     }
   };
 
-  const copyLink = () => {
-    navigator.clipboard.writeText(generatedLink);
-    toast("Link disalin!", "success");
+  const closeExport = () => {
+    exportUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    exportUrls.current = [];
+    setExportState(null);
   };
 
+  const downloadOne = (sheet) =>
+    downloadCanvas(sheet.canvas, `${safeFileName('rincian', sheet.name, exportState.activity.name)}.png`);
+
+  /** Satu gambar panjang berisi semua orang. Mengunduh belasan file sekaligus
+   *  akan diblokir browser setelah file kedua, jadi ini jalan yang aman. */
+  const downloadCombined = async () => {
+    if (!exportState) return;
+    setIsExporting(true);
+    try {
+      const combined = stackCanvases(exportState.sheets.map((s) => s.canvas));
+      if (combined) {
+        await downloadCanvas(combined, `${safeFileName('rincian_semua', exportState.activity.name)}.png`);
+        toast('Gambar gabungan tersimpan.');
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const downloadEach = async () => {
+    if (!exportState) return;
+    setIsExporting(true);
+    try {
+      for (const sheet of exportState.sheets) {
+        await downloadOne(sheet);
+        await new Promise((r) => setTimeout(r, 450));
+      }
+      toast(`${exportState.sheets.length} gambar diunduh.`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ── Login ──
   if (!isLoggedIn) {
     return (
-      <div className="card" style={{ maxWidth: '400px', margin: '0 auto', marginTop: '2rem' }}>
-        <h2 className="card-title text-center" style={{ display: 'block' }}>Admin Login</h2>
-        <div className="form-group">
-          <label className="form-label">Password</label>
-          <input 
-            type="password" 
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="form-control" 
-            onKeyUp={(e) => e.key === 'Enter' && checkPassword()}
-            placeholder="Masukkan password admin..."
-          />
-          {loginError && <p className="text-danger mb-2 mt-2" style={{ fontSize: '0.875rem' }}>Password salah.</p>}
+      <>
+        <div className="card pop" style={{ maxWidth: 400, margin: '2rem auto 0' }}>
+          <div className="center" style={{ marginBottom: '1.25rem' }}>
+            <div className="empty__icon" style={{ color: 'var(--brand-600)' }}>
+              <ShieldCheck size={22} />
+            </div>
+            <h1 className="title">Area Admin</h1>
+            <p className="subtitle">Masuk untuk mengelola kegiatan.</p>
+          </div>
+
+          <div className="field">
+            <label className="label" htmlFor="pwd">
+              Password
+            </label>
+            <input
+              id="pwd"
+              type="password"
+              className="input"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setLoginError(false);
+              }}
+              onKeyUp={(e) => e.key === 'Enter' && login()}
+              placeholder="••••••••"
+              autoComplete="current-password"
+            />
+            {loginError && <p className="hint" style={{ color: 'var(--bad-text)' }}>Password salah.</p>}
+          </div>
+
+          <button type="button" className="btn btn--primary btn--block btn--lg" style={{ marginTop: '1rem' }} onClick={login}>
+            <LogIn size={17} /> Masuk
+          </button>
         </div>
-        <button onClick={checkPassword} className="btn btn-primary btn-block">
-          <LogIn size={20} /> Login
-        </button>
-      </div>
+        <div className="footer">
+          <Link to="/" className="admin-link">
+            ← Kembali
+          </Link>
+        </div>
+      </>
     );
   }
 
   return (
-    <div>
-      <div className="tabs mb-4" style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '2rem' }}>
-        <button onClick={() => setActiveTab('dashboard')} className={`btn ${activeTab === 'dashboard' ? 'btn-primary' : 'btn-secondary'}`}>
-          <List size={18} /> Dashboard
-        </button>
-        <button onClick={() => setActiveTab('create')} className={`btn ${activeTab === 'create' ? 'btn-primary' : 'btn-secondary'}`}>
-          <PlusCircle size={18} /> Buat Kegiatan Baru
-        </button>
+    <>
+      <div className="card rise" style={{ '--i': 0 }}>
+        <div className="cluster">
+          <div className="grow">
+            <p className="eyebrow">Admin</p>
+            <h1 className="title">Kelola kegiatan</h1>
+          </div>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={logout}>
+            Keluar
+          </button>
+        </div>
+        <div style={{ marginTop: '1rem' }}>
+          <Segmented options={TABS} value={tab} onChange={setTab} brand label="Bagian admin" />
+        </div>
       </div>
 
-      {activeTab === 'dashboard' && (
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h2 className="card-title mb-0">Daftar Kegiatan</h2>
-            <button onClick={fetchActivities} className="btn btn-secondary btn-sm" disabled={isLoadingActivities}>
-              <RefreshCw size={16} className={isLoadingActivities ? 'spin' : ''} /> Refresh
+      {tab === 'dashboard' && (
+        <div className="card rise" style={{ '--i': 1 }}>
+          <div className="card__head">
+            <div>
+              <h2 className="title">Daftar kegiatan</h2>
+              <p className="subtitle">{activities.length} kegiatan tersimpan</p>
+            </div>
+            <button type="button" className="btn btn--soft btn--sm" onClick={fetchActivities} disabled={isLoadingList}>
+              <RefreshCw size={14} className={isLoadingList ? 'spin' : undefined} /> Segarkan
             </button>
           </div>
-          
-          {isLoadingActivities ? (
-            <div className="text-center py-4 text-secondary">Memuat data...</div>
-          ) : allActivities.length === 0 ? (
-            <div className="text-center py-4 text-secondary">Belum ada kegiatan.</div>
+
+          {isLoadingList ? (
+            <div className="stack">
+              <Skeleton h={96} r={12} />
+              <Skeleton h={96} r={12} />
+            </div>
+          ) : activities.length === 0 ? (
+            <Empty icon={<LayoutList size={20} />} title="Belum ada kegiatan">
+              Buat kegiatan pertama di tab “Buat Baru”.
+            </Empty>
           ) : (
-            <div className="activities-list">
-              {allActivities.map((act) => (
-                <div key={act.id} className="activity-item" style={{ marginBottom: '1rem', padding: '1.25rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)' }}>
-                  <div className="activity-header">
-                    <div style={{ flex: 1 }}>
-                      {editingActivityId === act.id ? (
-                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                          <input 
-                            type="text" 
-                            value={editActivityName}
-                            onChange={(e) => setEditActivityName(e.target.value)}
-                            className="form-control" 
-                            style={{ flex: 1, padding: '0.25rem 0.5rem', fontSize: '1rem' }} 
-                          />
-                          <button onClick={saveEdit} className="btn btn-primary btn-sm">Simpan</button>
-                          <button onClick={cancelEdit} className="btn btn-secondary btn-sm">Batal</button>
+            <div className="rows">
+              {activities.map((act, i) => {
+                const isOpen = openMembersFor === act.id;
+                const members = memberCache[act.id] ?? [];
+                const busy = busyId === act.id;
+
+                return (
+                  <div key={act.id} className="tx rise" style={{ '--i': Math.min(i, 6) }}>
+                    <div className="cluster" style={{ alignItems: 'flex-start' }}>
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        {renamingId === act.id ? (
+                          <div className="cluster">
+                            <input
+                              className="input grow"
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onKeyUp={(e) => e.key === 'Enter' && saveRename()}
+                              autoFocus
+                            />
+                            <button type="button" className="btn btn--primary btn--sm" onClick={saveRename} disabled={busy}>
+                              <Save size={14} /> Simpan
+                            </button>
+                            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setRenamingId(null)}>
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="tx__label">{act.name}</p>
+                        )}
+                        <p className="tx__sub">{formatDate(act.created_at)}</p>
+                        <div className="chips" style={{ marginTop: '0.4rem' }}>
+                          <span className={`badge badge--dot ${act.status === 'active' ? 'badge--ok' : ''}`}>
+                            {act.status === 'active' ? 'Aktif' : 'Selesai'}
+                          </span>
+                          {isOpen && members.length > 0 && (
+                            <span className="badge">
+                              <Users size={11} /> {members.length}
+                            </span>
+                          )}
                         </div>
-                      ) : (
-                        <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', color: 'var(--primary)' }}>{act.name}</h3>
-                      )}
-                      
-                      <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                        Tanggal: {formatDate(act.created_at)}
-                      </div>
-                      <div>
-                        <span className={`badge ${act.status === 'active' ? 'badge-success' : 'badge-secondary'}`}>
-                          {act.status === 'active' ? 'Aktif' : 'Selesai'}
-                        </span>
                       </div>
                     </div>
-                    <div className="activity-actions">
-                      <button onClick={() => copyActivityLink(act.id)} className="btn btn-secondary btn-sm" title="Copy Link">
-                        <Copy size={16} /> Copy Link
+
+                    <div className="tx__foot">
+                      <button type="button" className="btn btn--soft btn--sm" onClick={() => copyShareLink(act.id)}>
+                        <Link2 size={14} /> Link
                       </button>
                       <button
-                        onClick={() => exportExpenses(act)}
-                        className="btn btn-secondary btn-sm"
-                        style={{ color: '#5A7A58' }}
-                        title="Export Pengeluaran per Orang"
-                        disabled={exportingActivityId === act.id}
+                        type="button"
+                        className="btn btn--soft btn--sm"
+                        onClick={() => openExport(act)}
+                        disabled={busy && isExporting}
                       >
-                        <Download size={16} /> {exportingActivityId === act.id ? 'Mengekspor...' : 'Export Pengeluaran'}
+                        {busy && isExporting ? <RefreshCw size={14} className="spin" /> : <Download size={14} />}
+                        Export
                       </button>
-                      <div className="activity-actions-row">
-                        <button onClick={() => manageMembers(act.id)} className="btn btn-secondary btn-sm" style={{ color: 'var(--primary)' }} title="Kelola Anggota">
-                          <Users size={16} /> Kelola Anggota
+                      <button type="button" className="btn btn--soft btn--sm" onClick={() => toggleMembers(act.id)}>
+                        <Users size={14} /> Anggota
+                      </button>
+                      {renamingId !== act.id && (
+                        <button
+                          type="button"
+                          className="btn btn--soft btn--sm"
+                          onClick={() => {
+                            setRenamingId(act.id);
+                            setRenameValue(act.name);
+                          }}
+                        >
+                          <Pencil size={14} /> Nama
                         </button>
-                        {editingActivityId !== act.id && (
-                          <button onClick={() => startEdit(act)} className="btn btn-secondary btn-sm" style={{ color: 'var(--primary)' }} title="Edit Nama">
-                            <Edit size={16} /> Edit
-                          </button>
-                        )}
-                        <button onClick={() => deleteActivityItem(act.id)} className="btn btn-secondary btn-sm" style={{ color: 'var(--danger)' }} title="Hapus">
-                          <Trash2 size={16} /> Hapus
+                      )}
+                      {act.status === 'active' && (
+                        <button type="button" className="btn btn--soft btn--sm" onClick={() => finishActivity(act)} disabled={busy}>
+                          <CheckCircle2 size={14} /> Selesai
                         </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn btn--danger btn--sm"
+                        onClick={() => removeActivity(act)}
+                        disabled={busy}
+                        aria-label={`Hapus ${act.name}`}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+
+                    {/* Panel anggota: tingginya di-animasi lewat grid-template-rows */}
+                    <div className="collapse" data-open={isOpen}>
+                      <div className="collapse__inner">
+                        <div
+                          style={{
+                            marginTop: '0.85rem',
+                            paddingTop: '0.85rem',
+                            borderTop: '1px dashed var(--line-strong)',
+                          }}
+                        >
+                          {isLoadingMembers && isOpen ? (
+                            <Skeleton h={44} r={10} />
+                          ) : (
+                            <div className="stack stack--sm">
+                              {members.map((member, index) => (
+                                <div key={member.id} className="inline-rows">
+                                  <input
+                                    className="input grow"
+                                    value={member.name ?? ''}
+                                    onChange={(e) => patchMember(act.id, index, 'name', e.target.value)}
+                                    placeholder="Nama"
+                                    aria-label="Nama anggota"
+                                  />
+                                  <input
+                                    className="input grow"
+                                    value={member.bank_name ?? ''}
+                                    onChange={(e) => patchMember(act.id, index, 'bank_name', e.target.value)}
+                                    placeholder="Bank / e-wallet"
+                                    aria-label="Bank"
+                                  />
+                                  <input
+                                    className="input grow"
+                                    value={member.bank_account ?? ''}
+                                    onChange={(e) => patchMember(act.id, index, 'bank_account', e.target.value)}
+                                    placeholder="No. rekening"
+                                    inputMode="numeric"
+                                    aria-label="Nomor rekening"
+                                  />
+                                  <div className="cluster">
+                                    <button
+                                      type="button"
+                                      className="btn btn--primary btn--sm"
+                                      onClick={() => saveMember(member)}
+                                      disabled={busyId === member.id}
+                                      aria-label={`Simpan ${member.name}`}
+                                    >
+                                      <Save size={14} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn--danger btn--sm"
+                                      onClick={() => removeMember(act.id, member)}
+                                      disabled={busyId === member.id}
+                                      aria-label={`Hapus ${member.name}`}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+
+                              <div className="inline-rows" style={{ borderStyle: 'dashed' }}>
+                                <input
+                                  className="input grow"
+                                  value={draftMember.name}
+                                  onChange={(e) => setDraftMember({ ...draftMember, name: e.target.value })}
+                                  placeholder="Nama baru"
+                                  aria-label="Nama anggota baru"
+                                />
+                                <input
+                                  className="input grow"
+                                  value={draftMember.bank_name}
+                                  onChange={(e) => setDraftMember({ ...draftMember, bank_name: e.target.value })}
+                                  placeholder="Bank / e-wallet"
+                                  aria-label="Bank anggota baru"
+                                />
+                                <input
+                                  className="input grow"
+                                  value={draftMember.bank_account}
+                                  onChange={(e) => setDraftMember({ ...draftMember, bank_account: e.target.value })}
+                                  placeholder="No. rekening"
+                                  inputMode="numeric"
+                                  aria-label="Rekening anggota baru"
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn--primary btn--sm"
+                                  onClick={() => addMember(act.id)}
+                                  disabled={!draftMember.name.trim() || busyId === `add-${act.id}`}
+                                >
+                                  <UserPlus size={14} /> Tambah
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-
-                  {manageMembersActivityId === act.id && (
-                    <div className="mt-3 p-3" style={{ background: 'var(--background)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <h4 style={{ margin: 0, fontSize: '1rem', color: 'var(--primary)' }}>Kelola Anggota</h4>
-                        <button onClick={closeManageMembers} className="btn btn-secondary btn-sm">Tutup</button>
-                      </div>
-                      
-                      {isLoadingMembers ? (
-                        <div className="text-center py-2 text-secondary">Memuat anggota...</div>
-                      ) : (
-                        <div>
-                          {membersToManage.map((member, index) => (
-                            <div key={member.id || index} className="mb-3 manage-member-row">
-                              <input 
-                                type="text" 
-                                value={member.name}
-                                onChange={(e) => handleManageMemberChange(index, 'name', e.target.value)}
-                                className="form-control" 
-                                placeholder="Nama" 
-                                style={{ flex: 1, minWidth: 0, fontSize: '0.875rem' }} 
-                              />
-                              <input 
-                                type="text" 
-                                value={member.bank_name}
-                                onChange={(e) => handleManageMemberChange(index, 'bank_name', e.target.value)}
-                                className="form-control" 
-                                placeholder="Bank" 
-                                style={{ flex: 1, minWidth: 0, fontSize: '0.875rem' }} 
-                              />
-                              <input 
-                                type="text" 
-                                value={member.bank_account}
-                                onChange={(e) => handleManageMemberChange(index, 'bank_account', e.target.value)}
-                                className="form-control" 
-                                placeholder="No Rek" 
-                                style={{ flex: 1, minWidth: 0, fontSize: '0.875rem' }} 
-                              />
-                              <button onClick={() => saveMember(member)} className="btn btn-primary btn-sm" title="Simpan">
-                                <Save size={16} />
-                              </button>
-                              <button onClick={() => removeExistingMember(member, index)} className="btn btn-secondary btn-sm" style={{ color: 'var(--danger)' }} title="Hapus">
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          ))}
-                          
-                          <div className="mt-4 add-member-row" style={{ borderTop: '1px dashed var(--border)', paddingTop: '1rem' }}>
-                            <input 
-                              type="text" 
-                              value={newMember.name}
-                              onChange={(e) => setNewMember({...newMember, name: e.target.value})}
-                              className="form-control" 
-                              placeholder="Nama Baru" 
-                              style={{ flex: 1, minWidth: 0, fontSize: '0.875rem' }} 
-                            />
-                            <input 
-                              type="text" 
-                              value={newMember.bank_name}
-                              onChange={(e) => setNewMember({...newMember, bank_name: e.target.value})}
-                              className="form-control" 
-                              placeholder="Bank" 
-                              style={{ flex: 1, minWidth: 0, fontSize: '0.875rem' }} 
-                            />
-                            <input 
-                              type="text" 
-                              value={newMember.bank_account}
-                              onChange={(e) => setNewMember({...newMember, bank_account: e.target.value})}
-                              className="form-control" 
-                              placeholder="No Rek" 
-                              style={{ flex: 1, minWidth: 0, fontSize: '0.875rem' }} 
-                            />
-                            <button onClick={addNewMember} className="btn btn-primary btn-sm" disabled={!newMember.name}>
-                              <PlusCircle size={16} /> Tambah
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       )}
 
-      {activeTab === 'create' && (
-        <div className="card">
-          <h2 className="card-title">Buat Kegiatan Baru</h2>
-          
-          <div className="form-group">
-            <label className="form-label">Nama Kegiatan</label>
-            <input 
-              type="text" 
-              value={activityName}
-              onChange={(e) => setActivityName(e.target.value)}
-              className="form-control" 
-              placeholder="Contoh: Makan Siang Bersama" 
+      {tab === 'create' && (
+        <div className="card rise" style={{ '--i': 1 }}>
+          <div className="card__head">
+            <div>
+              <h2 className="title">Kegiatan baru</h2>
+              <p className="subtitle">Nomor rekening boleh diisi nanti lewat menu Anggota.</p>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="label" htmlFor="act-name">
+              Nama kegiatan
+            </label>
+            <input
+              id="act-name"
+              className="input"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Trip Bromo, Makan Siang Tim…"
             />
           </div>
 
-          <div className="form-group mt-4">
-            <label className="form-label">Daftar Anggota</label>
-            {members.map((member, index) => (
-              <div key={index} className="member-row mb-3">
-                <input 
-                  type="text" 
-                  value={member.name}
-                  onChange={(e) => handleMemberChange(index, 'name', e.target.value)}
-                  className="form-control" 
-                  placeholder="Nama Anggota" 
-                  style={{ flex: 1 }} 
-                />
-                <input 
-                  type="text" 
-                  value={member.bank_name}
-                  onChange={(e) => handleMemberChange(index, 'bank_name', e.target.value)}
-                  className="form-control" 
-                  placeholder="Bank/E-Wallet" 
-                  style={{ flex: 1 }} 
-                />
-                <input 
-                  type="text" 
-                  value={member.bank_account}
-                  onChange={(e) => handleMemberChange(index, 'bank_account', e.target.value)}
-                  className="form-control" 
-                  placeholder="No Rekening (Opsional)" 
-                  style={{ flex: 1 }} 
-                />
-                {members.length > 1 && (
-                  <button onClick={() => removeMember(index)} className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }}>
-                    <Trash2 size={16} /> Hapus
-                  </button>
-                )}
-              </div>
-            ))}
-            <button onClick={addMember} className="btn btn-secondary mt-2" style={{ fontSize: '0.875rem' }}>
-              <UserPlus size={16} /> Tambah Anggota
+          <div className="field" style={{ marginTop: '1.15rem' }}>
+            <div className="cluster">
+              <label className="label grow">Anggota</label>
+              <span className="badge">{filledMembers.length} terisi</span>
+            </div>
+
+            <div className="stack stack--sm">
+              {newMembers.map((member, index) => (
+                <div key={index} className="inline-rows">
+                  <input
+                    className="input grow"
+                    value={member.name}
+                    onChange={(e) =>
+                      setNewMembers((prev) => prev.map((m, i) => (i === index ? { ...m, name: e.target.value } : m)))
+                    }
+                    placeholder={`Nama anggota ${index + 1}`}
+                    aria-label={`Nama anggota ${index + 1}`}
+                  />
+                  <input
+                    className="input grow"
+                    value={member.bank_name}
+                    onChange={(e) =>
+                      setNewMembers((prev) =>
+                        prev.map((m, i) => (i === index ? { ...m, bank_name: e.target.value } : m)),
+                      )
+                    }
+                    placeholder="Bank / e-wallet"
+                    aria-label="Bank"
+                  />
+                  <input
+                    className="input grow"
+                    value={member.bank_account}
+                    onChange={(e) =>
+                      setNewMembers((prev) =>
+                        prev.map((m, i) => (i === index ? { ...m, bank_account: e.target.value } : m)),
+                      )
+                    }
+                    placeholder="No. rekening"
+                    inputMode="numeric"
+                    aria-label="Nomor rekening"
+                  />
+                  {newMembers.length > 1 && (
+                    <button
+                      type="button"
+                      className="btn btn--danger btn--sm"
+                      onClick={() => setNewMembers((prev) => prev.filter((_, i) => i !== index))}
+                      aria-label={`Hapus baris ${index + 1}`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              className="btn btn--soft btn--sm"
+              style={{ marginTop: '0.6rem', alignSelf: 'flex-start' }}
+              onClick={() => setNewMembers((prev) => [...prev, emptyMember()])}
+            >
+              <UserPlus size={14} /> Tambah baris
             </button>
           </div>
 
-          <button onClick={createActivity} className="btn btn-primary btn-block mt-4" disabled={isLoading}>
-            {!isLoading && <PlusCircle size={20} />}
-            {isLoading ? 'Membuat...' : 'Buat Kegiatan & Generate Link'}
+          <button
+            type="button"
+            className="btn btn--primary btn--block btn--lg"
+            style={{ marginTop: '1.25rem' }}
+            onClick={createActivity}
+            disabled={isCreating}
+          >
+            {isCreating ? <RefreshCw size={17} className="spin" /> : <PlusCircle size={17} />}
+            {isCreating ? 'Membuat…' : 'Buat & ambil link'}
           </button>
 
-          {generatedLink && (
-            <div className="link-result mt-4" style={{ backgroundColor: '#F0FDF4', padding: '1rem', borderRadius: 'var(--radius)', border: '1px solid #BBF7D0' }}>
-              <label className="form-label" style={{ color: 'var(--secondary)' }}>Sukses! Bagikan link ini ke peserta:</label>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <input 
-                  type="text" 
-                  readOnly 
-                  value={generatedLink} 
-                  className="form-control" 
-                  style={{ background: 'var(--background)', color: 'var(--primary)', fontWeight: '600' }} 
-                />
-                <button onClick={copyLink} className="btn btn-primary">
-                  <Copy size={20} /> Copy
+          {createdLink && (
+            <div className="notice notice--ok pop" style={{ marginTop: '1rem', flexDirection: 'column' }}>
+              <strong>Siap dibagikan</strong>
+              <div className="cluster" style={{ width: '100%', marginTop: '0.4rem' }}>
+                <input className="input grow mono" readOnly value={createdLink} onFocus={(e) => e.target.select()} />
+                <button
+                  type="button"
+                  className="btn btn--primary btn--sm"
+                  onClick={async () => {
+                    const ok = await copyText(createdLink);
+                    toast(ok ? 'Link disalin.' : 'Tidak bisa menyalin otomatis.', ok ? 'success' : 'error');
+                  }}
+                >
+                  <Copy size={14} /> Salin
                 </button>
               </div>
             </div>
           )}
         </div>
       )}
-    </div>
+
+      <div className="footer">
+        <Link to="/" className="admin-link">
+          ← Lihat sebagai peserta
+        </Link>
+      </div>
+
+      {/* ── Pratinjau export ── */}
+      <Sheet
+        open={Boolean(exportState)}
+        onClose={closeExport}
+        wide
+        title="Rincian per anggota"
+        description={
+          exportState
+            ? `${exportState.sheets.length} gambar dari "${exportState.activity.name}" · total ${formatRupiah(
+                exportState.total,
+              )}`
+            : ''
+        }
+        actions={
+          <>
+            <button type="button" className="btn btn--soft" onClick={downloadCombined} disabled={isExporting}>
+              <Layers size={16} /> Jadi 1 gambar
+            </button>
+            <button type="button" className="btn btn--primary" onClick={downloadEach} disabled={isExporting}>
+              {isExporting ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
+              Unduh semua
+            </button>
+          </>
+        }
+      >
+        {exportState && (
+          <>
+            <div className="preview-grid">
+              {exportState.sheets.map((sheet, i) => (
+                <div key={sheet.name + i} className="preview-card pop" style={{ animationDelay: `${i * 35}ms` }}>
+                  {sheet.url && <img src={sheet.url} alt={`Rincian ${sheet.name}`} loading="lazy" />}
+                  <div className="preview-card__foot">
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <p className="truncate" style={{ fontSize: '0.8rem', fontWeight: 700 }}>
+                        {sheet.name}
+                      </p>
+                      <p className="hint num">{formatRupiah(sheet.total)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn--soft btn--sm"
+                      onClick={() => downloadOne(sheet)}
+                      aria-label={`Unduh rincian ${sheet.name}`}
+                    >
+                      <Download size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="hint" style={{ marginTop: '0.85rem' }}>
+              Browser memblokir unduhan beruntun setelah file kedua, jadi “Jadi 1 gambar” lebih aman kalau anggotanya
+              banyak.
+            </p>
+          </>
+        )}
+      </Sheet>
+    </>
   );
 }

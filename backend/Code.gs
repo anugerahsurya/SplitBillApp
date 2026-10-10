@@ -25,7 +25,7 @@ function setup() {
   
   const transactionsSheet = db.getSheetByName('Transactions');
   if (transactionsSheet.getLastRow() === 0) {
-    transactionsSheet.appendRow(['id', 'activity_id', 'paid_by_member_id', 'amount', 'involved_member_ids', 'created_at']);
+    transactionsSheet.appendRow(['id', 'activity_id', 'paid_by_member_id', 'amount', 'involved_member_ids', 'created_at', 'item_name']);
   }
 }
 
@@ -74,13 +74,15 @@ function doGet(e) {
       const activityId = e.parameter.id;
       
       const activities = sheetToObjectArray(db.getSheetByName('Activities'));
-      const activity = activities.find(a => a.id === activityId);
+      // Dibandingkan sebagai teks: id yang seluruhnya angka terbaca sebagai
+      // number oleh Sheets, jadi perbandingan ketat bisa gagal tanpa sebab jelas.
+      const activity = activities.find(a => String(a.id) === String(activityId));
       
       if (!activity) {
         return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ error: 'Activity not found' })));
       }
       
-      const members = sheetToObjectArray(db.getSheetByName('Members')).filter(m => m.activity_id === activityId);
+      const members = sheetToObjectArray(db.getSheetByName('Members')).filter(m => String(m.activity_id) === String(activityId));
       const transactions = sheetToObjectArray(db.getSheetByName('Transactions')).filter(t => String(t.activity_id) === String(activityId));
       
       return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({
@@ -154,6 +156,39 @@ function doPost(e) {
       return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true, id: id })));
     }
     
+    // Simpan banyak pengeluaran dalam satu permintaan. Mode "custom per orang"
+    // di frontend dulunya memanggil addTransaction berulang kali; satu panggilan
+    // dengan satu setValues jauh lebih cepat dan tidak bisa berhenti separuh jalan.
+    if (action === 'addTransactions') {
+      const activityId = requestBody.activity_id;
+      const items = requestBody.items || [];
+      if (!items.length) {
+        return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true, ids: [] })));
+      }
+
+      const createdAt = new Date().toISOString();
+      const ids = [];
+      const rows = items.map(function (item) {
+        const id = generateId();
+        ids.push(id);
+        const involved = item.involved_member_ids || [];
+        return [
+          id,
+          activityId,
+          item.paid_by_member_id,
+          item.amount,
+          (involved.join ? involved.join(',') : String(involved)),
+          createdAt,
+          item.item_name || '-'
+        ];
+      });
+
+      const sheet = db.getSheetByName('Transactions');
+      sheet.getRange(Math.max(sheet.getLastRow(), 1) + 1, 1, rows.length, rows[0].length).setValues(rows);
+
+      return setCorsHeaders(ContentService.createTextOutput(JSON.stringify({ success: true, ids: ids })));
+    }
+
     if (action === 'finishActivity') {
       const activityId = requestBody.activity_id;
       const sheet = db.getSheetByName('Activities');

@@ -1,804 +1,996 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCheck,
+  Copy,
+  Download,
+  Eraser,
+  Image as ImageIcon,
+  Pencil,
+  PieChart,
+  Plus,
+  Receipt,
+  RefreshCw,
+  Save,
+  Trash2,
+  Trophy,
+  Users,
+  Wallet,
+  X,
+} from 'lucide-react';
 import { api } from '../services/api';
-import { CheckSquare, Save, Copy, Edit, Trash2 } from 'lucide-react';
-import { useToast } from '../App';
+import { buildLedger, parseInvolved, recapFor } from '../lib/split.js';
+import { formatDate, formatRupiah, splitEvenly } from '../lib/money.js';
+import { copyText } from '../lib/clipboard.js';
+import { downloadCanvas, renderReceipt, safeFileName, waitForFonts } from '../lib/receipt.js';
+import { useToast } from '../components/Toaster';
+import { useConfirm } from '../components/Confirm';
+import { Sheet } from '../components/Sheet';
+import { AnimatedRupiah, Empty, MoneyInput, Segmented, Skeleton } from '../components/ui';
+
+const VISIBLE_STEP = 8;
+
+const MODES = [
+  { value: 'simple', label: 'Bagi Rata', icon: <Users size={14} /> },
+  { value: 'advanced', label: 'Per Orang', icon: <PieChart size={14} /> },
+];
 
 export default function UserView() {
   const toast = useToast();
+  const confirm = useConfirm();
   const [searchParams] = useSearchParams();
   const activityId = searchParams.get('id');
 
   const [activity, setActivity] = useState(null);
-  const [members, setMembers] = useState([]);
+  const [rawMembers, setRawMembers] = useState([]);
   const [transactions, setTransactions] = useState([]);
-  
-  const [isLoading, setIsLoading] = useState(true);
+  const [status, setStatus] = useState('loading'); // loading | ready | error
   const [errorMsg, setErrorMsg] = useState('');
-  
-  const [paidById, setPaidById] = useState('');
-  const [amount, setAmount] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const [mode, setMode] = useState('simple');
   const [itemName, setItemName] = useState('');
-  const [involvedMemberIds, setInvolvedMemberIds] = useState([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [inputMode, setInputMode] = useState('simple'); // 'simple' | 'advanced'
-  const [advancedAmounts, setAdvancedAmounts] = useState({}); // { memberId: string }
+  const [paidById, setPaidById] = useState('');
+  const [amount, setAmount] = useState(0);
+  const [involved, setInvolved] = useState([]);
+  const [perPerson, setPerPerson] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
 
-  const [editingTransactionId, setEditingTransactionId] = useState(null);
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(VISIBLE_STEP);
 
-  const [isRecapModalOpen, setIsRecapModalOpen] = useState(false);
-  const [selectedRecapMemberId, setSelectedRecapMemberId] = useState('');
-  const [tempRecapMemberId, setTempRecapMemberId] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerValue, setPickerValue] = useState('');
+  const [recapId, setRecapId] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
 
-  const confirmRecapMember = () => {
-    if (tempRecapMemberId) {
-      setSelectedRecapMemberId(tempRecapMemberId);
-      setIsRecapModalOpen(false);
-    }
-  };
+  const formRef = useRef(null);
 
-  const fetchData = async () => {
-    if (!activityId) {
-      setIsLoading(false);
-      return;
-    }
+  // Id dari spreadsheet bisa datang sebagai angka atau teks; disamakan sekali
+  // di sini supaya seluruh perbandingan di bawah tidak perlu berhati-hati lagi.
+  const members = useMemo(
+    () => rawMembers.map((m) => ({ ...m, id: String(m.id) })),
+    [rawMembers],
+  );
 
-    try {
-      const res = await api.getActivity(activityId);
-      if (res.success) {
-        setActivity(res.data.activity);
-        setMembers(res.data.members);
-        
-        const sortedTrans = res.data.transactions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        setTransactions(sortedTrans);
-      } else {
-        setErrorMsg('Kegiatan tidak ditemukan atau link tidak valid.');
+  const load = useCallback(
+    async (signal, { silent = false } = {}) => {
+      if (!activityId) {
+        setStatus('ready');
+        return;
       }
-    } catch (err) {
-      setErrorMsg('Terjadi kesalahan koneksi saat memuat data.');
-      console.error(err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      if (silent) setIsRefreshing(true);
+
+      try {
+        const res = await api.getActivity(activityId, signal);
+        setActivity(res.data.activity);
+        setRawMembers(res.data.members ?? []);
+        setTransactions(res.data.transactions ?? []);
+        setStatus('ready');
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        setErrorMsg(
+          err.message === 'Activity not found'
+            ? 'Kegiatan tidak ditemukan. Coba minta ulang link-nya.'
+            : 'Gagal memuat data. Periksa koneksi, lalu coba lagi.',
+        );
+        setStatus('error');
+      } finally {
+        setIsRefreshing(false);
+      }
+    },
+    [activityId],
+  );
 
   useEffect(() => {
-    fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activityId]);
+    const controller = new AbortController();
+    setStatus('loading');
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
-  const toggleMemberInvolved = (id) => {
-    setInvolvedMemberIds(prev => 
-      prev.includes(id) ? prev.filter((mId) => mId !== id) : [...prev, id]
-    );
-  };
+  const ledger = useMemo(() => buildLedger(members, transactions), [members, transactions]);
+  const recap = useMemo(() => (recapId ? recapFor(ledger, recapId) : null), [ledger, recapId]);
 
-  const selectAllMembers = () => {
-    setInvolvedMemberIds(members.map(m => m.id));
-  };
+  const isActive = activity?.status === 'active';
+  const locked = !isActive && !editingId;
 
-  const clearMembers = () => {
-    setInvolvedMemberIds([]);
-  };
+  const advancedTotal = useMemo(
+    () => Object.values(perPerson).reduce((sum, v) => sum + (Number(v) || 0), 0),
+    [perPerson],
+  );
+  const advancedCount = useMemo(
+    () => Object.values(perPerson).filter((v) => Number(v) > 0).length,
+    [perPerson],
+  );
 
-  const getMemberName = (id) => {
-    const member = members.find((m) => String(m.id) === String(id));
-    return member ? member.name : 'Unknown';
-  };
+  const preview = useMemo(() => {
+    if (mode === 'advanced' || !amount || involved.length === 0) return null;
+    const shares = splitEvenly(amount, involved.length);
+    const min = Math.min(...shares);
+    const max = Math.max(...shares);
+    return min === max ? formatRupiah(min) : `${formatRupiah(min)}–${formatRupiah(max)}`;
+  }, [mode, amount, involved.length]);
 
-  const formatRupiah = (number) => {
-    if (!number) return 'Rp 0';
-    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
-  };
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    return new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
-  };
-
-  const settlement = useMemo(() => {
-    if (members.length === 0 || transactions.length === 0) return [];
-    
-    let balances = {};
-    members.forEach(m => balances[m.id] = 0);
-    
-    transactions.forEach(t => {
-      const paidBy = t.paid_by_member_id;
-      const amountVal = parseFloat(t.amount);
-      const involvedStr = t.involved_member_ids;
-      
-      let involvedIds = [];
-      if (typeof involvedStr === 'string' && involvedStr.trim() !== '') {
-        involvedIds = involvedStr.split(',').map(s => s.trim()).filter(s => s);
-      } else if (Array.isArray(involvedStr)) {
-        involvedIds = involvedStr;
-      }
-      
-      if (involvedIds.length === 0) return;
-      
-      const splitAmount = amountVal / involvedIds.length;
-      
-      if (balances[paidBy] !== undefined) {
-        balances[paidBy] += amountVal;
-      }
-      
-      involvedIds.forEach(id => {
-        if (balances[id] !== undefined) {
-          balances[id] -= splitAmount;
-        }
-      });
-    });
-    
-    let debtors = [];
-    let creditors = [];
-    
-    for (const [id, balance] of Object.entries(balances)) {
-      if (balance < -0.01) debtors.push({ id, amount: Math.abs(balance) });
-      else if (balance > 0.01) creditors.push({ id, amount: balance });
-    }
-    
-    debtors.sort((a, b) => b.amount - a.amount);
-    creditors.sort((a, b) => b.amount - a.amount);
-    
-    let results = [];
-    let i = 0, j = 0;
-    
-    while (i < debtors.length && j < creditors.length) {
-      let debtor = debtors[i];
-      let creditor = creditors[j];
-      
-      let minAmount = Math.min(debtor.amount, creditor.amount);
-      
-      const debtorObj = members.find(m => String(m.id) === String(debtor.id));
-      const creditorObj = members.find(m => String(m.id) === String(creditor.id));
-      
-      if (debtorObj && creditorObj) {
-        results.push({
-          from: debtorObj.name,
-          to: creditorObj.name,
-          amount: minAmount,
-          bankName: creditorObj.bank_name,
-          bankAccount: creditorObj.bank_account
-        });
-      }
-      
-      debtor.amount -= minAmount;
-      creditor.amount -= minAmount;
-      
-      if (debtor.amount < 0.01) i++;
-      if (creditor.amount < 0.01) j++;
-    }
-    
-    return results;
-  }, [members, transactions]);
-
-  const totalExpense = useMemo(() => {
-    return transactions.reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
-  }, [transactions]);
-
-  const topContributor = useMemo(() => {
-    if (transactions.length === 0 || members.length === 0) return null;
-    const contributions = {};
-    transactions.forEach(t => {
-      contributions[t.paid_by_member_id] = (contributions[t.paid_by_member_id] || 0) + Number(t.amount);
-    });
-    
-    let topId = null;
-    let maxAmount = 0;
-    for (const [id, amt] of Object.entries(contributions)) {
-      if (amt > maxAmount) {
-        maxAmount = amt;
-        topId = id;
-      }
-    }
-    
-    const member = members.find(m => String(m.id) === String(topId));
-    return member ? { name: member.name, amount: maxAmount } : null;
-  }, [transactions, members]);
-
-  const spendersRanking = useMemo(() => {
-    if (transactions.length === 0 || members.length === 0) return [];
-    
-    const expenses = {};
-    members.forEach(m => expenses[m.id] = 0);
-    
-    transactions.forEach(t => {
-      const amt = Number(t.amount);
-      const involvedStr = t.involved_member_ids;
-      let involved = [];
-      if (typeof involvedStr === 'string' && involvedStr.trim() !== '') {
-        involved = involvedStr.split(',').map(s => s.trim()).filter(s => s);
-      } else if (Array.isArray(involvedStr)) {
-        involved = involvedStr;
-      }
-      if (involved.length === 0) return;
-      const splitAmt = amt / involved.length;
-      
-      involved.forEach(id => {
-        if (expenses[id] !== undefined) {
-          expenses[id] += splitAmt;
-        }
-      });
-    });
-    
-    return members
-      .map(m => ({ id: m.id, name: m.name, amount: expenses[m.id] }))
-      .filter(m => m.amount > 0)
-      .sort((a, b) => b.amount - a.amount);
-  }, [transactions, members]);
-
-  const recapData = useMemo(() => {
-    if (!selectedRecapMemberId || transactions.length === 0 || members.length === 0) return null;
-    
-    const member = members.find(m => String(m.id) === String(selectedRecapMemberId));
-    if (!member) return null;
-    
-    const items = [];
-    let total = 0;
-    
-    transactions.forEach(t => {
-      const involvedStr = t.involved_member_ids;
-      let involved = [];
-      if (typeof involvedStr === 'string' && involvedStr.trim() !== '') {
-        involved = involvedStr.split(',').map(s => s.trim()).filter(s => s);
-      } else if (Array.isArray(involvedStr)) {
-        involved = involvedStr;
-      }
-      
-      if (involved.includes(String(member.id))) {
-        const splitAmt = Number(t.amount) / involved.length;
-        items.push({
-          name: t.item_name && t.item_name !== '-' ? t.item_name : 'Pengeluaran',
-          amount: splitAmt
-        });
-        total += splitAmt;
-      }
-    });
-    
-    return {
-      member: member,
-      items: items,
-      total: total
-    };
-  }, [selectedRecapMemberId, transactions, members]);
-
-  const submitTransaction = async () => {
-    if (!paidById || !amount || involvedMemberIds.length === 0) {
-      toast("Mohon lengkapi form transaksi.", "error");
-      return;
-    }
-    
-    setIsSubmitting(true);
-    try {
-      const res = await api.addTransaction({
-        activity_id: activityId,
-        paid_by_member_id: paidById,
-        amount: amount,
-        item_name: itemName,
-        involved_member_ids: involvedMemberIds
-      });
-      
-      if (res.success) {
-        setPaidById('');
-        setAmount('');
-        setItemName('');
-        setInvolvedMemberIds([]);
-        setAdvancedAmounts({});
-        await fetchData();
-        toast("Pengeluaran berhasil ditambahkan!", "success");
-      } else {
-        toast("Gagal menambahkan transaksi: " + res.error, "error");
-      }
-    } catch (err) {
-      toast("Terjadi kesalahan koneksi.", "error");
-      console.error(err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const submitAdvancedTransaction = async () => {
-    if (!paidById) {
-      toast("Pilih siapa yang bayar.", "error");
-      return;
-    }
-    const entries = Object.entries(advancedAmounts).filter(([, v]) => Number(v) > 0);
-    if (entries.length === 0) {
-      toast("Masukkan nominal untuk minimal 1 orang.", "error");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      // Submit satu transaksi per orang agar settlement tetap akurat
-      for (const [memberId, memberAmount] of entries) {
-        const label = itemName
-          ? `${itemName} (${members.find(m => String(m.id) === String(memberId))?.name || ''})`
-          : members.find(m => String(m.id) === String(memberId))?.name || 'Pengeluaran';
-        await api.addTransaction({
-          activity_id: activityId,
-          paid_by_member_id: paidById,
-          amount: Number(memberAmount),
-          item_name: label,
-          involved_member_ids: [memberId]
-        });
-      }
-      setPaidById('');
-      setItemName('');
-      setAdvancedAmounts({});
-      await fetchData();
-      toast(`Berhasil menyimpan ${entries.length} pengeluaran!`, 'success');
-    } catch (err) {
-      toast("Terjadi kesalahan koneksi.", "error");
-      console.error(err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const startEditTransaction = (t) => {
-    setEditingTransactionId(t.id);
-    setPaidById(t.paid_by_member_id);
-    setAmount(t.amount);
-    setItemName(t.item_name !== '-' ? t.item_name : '');
-    
-    const involved = typeof t.involved_member_ids === 'string' 
-      ? t.involved_member_ids.split(',') 
-      : t.involved_member_ids;
-    setInvolvedMemberIds(involved);
-  };
-
-  const cancelEditTransaction = () => {
-    setEditingTransactionId(null);
-    setPaidById('');
-    setAmount('');
+  // ── Form ──
+  const resetForm = useCallback(() => {
+    setEditingId(null);
     setItemName('');
-    setInvolvedMemberIds([]);
-    setAdvancedAmounts({});
+    setPaidById('');
+    setAmount(0);
+    setInvolved([]);
+    setPerPerson({});
+  }, []);
+
+  const toggleInvolved = (id) =>
+    setInvolved((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const startEdit = (row) => {
+    setEditingId(row.id);
+    setMode('simple');
+    setItemName(row.label === 'Pengeluaran' ? '' : row.label);
+    setPaidById(row.payerId);
+    setAmount(row.amount);
+    // parseInvolved sekaligus membersihkan spasi — tanpa itu id seperti " ab12"
+    // tidak cocok dengan daftar anggota dan centangnya gagal muncul.
+    setInvolved(parseInvolved(row.raw.involved_member_ids).filter((id) => members.some((m) => m.id === id)));
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
-  const saveEditTransaction = async () => {
-    if (!paidById || !amount || involvedMemberIds.length === 0) {
-      toast("Mohon lengkapi form transaksi.", "error");
-      return;
-    }
+  const submit = async () => {
+    if (mode === 'advanced' && !editingId) return submitPerPerson();
 
-    setIsSavingEdit(true);
+    if (!paidById) return toast('Pilih dulu siapa yang bayar.', 'error');
+    if (!amount) return toast('Nominalnya belum diisi.', 'error');
+    if (involved.length === 0) return toast('Pilih minimal satu orang yang ikut patungan.', 'error');
+
+    setIsSaving(true);
+    const payload = {
+      paid_by_member_id: paidById,
+      amount,
+      item_name: itemName.trim(),
+      involved_member_ids: involved,
+    };
+
     try {
-      const res = await api.editTransaction({
-        transaction_id: editingTransactionId,
-        paid_by_member_id: paidById,
-        amount: amount,
-        item_name: itemName,
-        involved_member_ids: involvedMemberIds
-      });
-      
-      if (res.success) {
-        cancelEditTransaction();
-        await fetchData();
-        toast("Transaksi berhasil disimpan!", "success");
+      if (editingId) {
+        await api.editTransaction({ transaction_id: editingId, ...payload });
+        // Tempel hasilnya langsung ke state alih-alih memuat ulang semuanya:
+        // satu panggilan Apps Script lebih sedikit, dan angka di layar
+        // ikut berubah seketika.
+        setTransactions((prev) =>
+          prev.map((t) =>
+            String(t.id) === String(editingId)
+              ? {
+                  ...t,
+                  paid_by_member_id: paidById,
+                  amount,
+                  item_name: payload.item_name || '-',
+                  involved_member_ids: involved.join(','),
+                }
+              : t,
+          ),
+        );
+        toast('Pengeluaran diperbarui.');
       } else {
-        toast("Gagal menyimpan transaksi: " + res.error, "error");
+        const res = await api.addTransaction({ activity_id: activityId, ...payload });
+        setTransactions((prev) => [
+          {
+            id: res.id,
+            activity_id: activityId,
+            paid_by_member_id: paidById,
+            amount,
+            item_name: payload.item_name || '-',
+            involved_member_ids: involved.join(','),
+            created_at: new Date().toISOString(),
+          },
+          ...prev,
+        ]);
+        toast('Pengeluaran tercatat.');
       }
+      resetForm();
     } catch (err) {
-      toast("Terjadi kesalahan koneksi.", "error");
-      console.error(err);
+      toast(`Gagal menyimpan: ${err.message}`, 'error');
     } finally {
-      setIsSavingEdit(false);
+      setIsSaving(false);
     }
   };
 
-  const deleteTransaction = async (id) => {
-    if (window.confirm('Yakin ingin menghapus pengeluaran ini?')) {
-      try {
-        const res = await api.deleteTransaction(id);
-        if (res.success) {
-          toast("Transaksi berhasil dihapus.", "success");
-          await fetchData();
-        } else {
-          toast('Gagal menghapus: ' + (res.error || 'Unknown error'), 'error');
-        }
-      } catch (err) {
-        toast('Terjadi kesalahan koneksi.', 'error');
-      }
+  const submitPerPerson = async () => {
+    if (!paidById) return toast('Pilih dulu siapa yang bayar.', 'error');
+
+    const items = Object.entries(perPerson)
+      .filter(([, v]) => Number(v) > 0)
+      .map(([memberId, value]) => {
+        const name = members.find((m) => m.id === memberId)?.name ?? '';
+        const label = itemName.trim() ? `${itemName.trim()} — ${name}` : name || 'Pengeluaran';
+        return {
+          paid_by_member_id: paidById,
+          amount: Number(value),
+          item_name: label,
+          involved_member_ids: [memberId],
+        };
+      });
+
+    if (items.length === 0) return toast('Isi nominal untuk minimal satu orang.', 'error');
+
+    setIsSaving(true);
+    try {
+      const res = await api.addTransactions(activityId, items);
+      const createdAt = new Date().toISOString();
+      setTransactions((prev) => [
+        ...items.map((item, i) => ({
+          id: res.ids[i],
+          activity_id: activityId,
+          paid_by_member_id: item.paid_by_member_id,
+          amount: item.amount,
+          item_name: item.item_name,
+          involved_member_ids: item.involved_member_ids.join(','),
+          created_at: createdAt,
+        })),
+        ...prev,
+      ]);
+      resetForm();
+      toast(`${items.length} pengeluaran tercatat.`);
+    } catch (err) {
+      toast(`Gagal menyimpan: ${err.message}`, 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const copyAccount = (account) => {
-    if (!account) return;
-    navigator.clipboard.writeText(account);
-    toast("Nomor rekening disalin!", "success");
+  const remove = async (row) => {
+    const ok = await confirm({
+      title: 'Hapus pengeluaran?',
+      message: `"${row.label}" sebesar ${formatRupiah(row.amount)} akan dihapus dan tagihan dihitung ulang.`,
+      confirmText: 'Hapus',
+    });
+    if (!ok) return;
+
+    try {
+      await api.deleteTransaction(row.id);
+      setTransactions((prev) => prev.filter((t) => String(t.id) !== String(row.id)));
+      if (editingId === row.id) resetForm();
+      toast('Pengeluaran dihapus.');
+    } catch (err) {
+      toast(`Gagal menghapus: ${err.message}`, 'error');
+    }
   };
 
-  if (isLoading) {
-    return <div className="text-center py-4 text-secondary" style={{ marginTop: '2rem' }}>Memuat data kegiatan...</div>;
-  }
+  const copyAccount = async (account) => {
+    const ok = await copyText(account);
+    toast(ok ? 'Nomor rekening disalin.' : 'Tidak bisa menyalin otomatis, salin manual ya.', ok ? 'success' : 'error');
+  };
 
-  if (!activityId) {
+  const downloadRecap = async () => {
+    if (!recap) return;
+    setIsExporting(true);
+    try {
+      await waitForFonts();
+      const canvas = renderReceipt({
+        activityName: activity?.name,
+        memberName: recap.member.name,
+        items: recap.items,
+        total: recap.total,
+        paid: recap.paid,
+        net: recap.net,
+        transfersOut: recap.outgoing,
+        transfersIn: recap.incoming,
+      });
+      await downloadCanvas(canvas, `${safeFileName('rincian', recap.member.name, activity?.name)}.png`);
+      toast('Gambar rincian tersimpan.');
+    } catch {
+      toast('Gagal membuat gambar.', 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // ── Tampilan khusus ──
+  if (!activityId && status !== 'loading') {
     return (
-      <div className="card text-center" style={{ marginTop: '2rem', padding: '3rem 1.5rem' }}>
-        <h2 className="card-title">Selamat Datang di SplitBill</h2>
-        <p className="text-secondary mb-4" style={{ maxWidth: '400px', margin: '0 auto 2rem' }}>
-          Minta link kegiatan dari temanmu untuk melihat tagihan, atau masuk ke area admin untuk membuat kegiatan baru.
-        </p>
-        <Link to="/admin" className="btn btn-primary" style={{ display: 'inline-flex' }}>
-          Masuk ke Area Admin
-        </Link>
-      </div>
+      <>
+        <div className="card center pop" style={{ padding: '2.5rem 1.5rem' }}>
+          <div className="empty__icon" style={{ width: 56, height: 56, marginBottom: '1rem' }}>
+            <Receipt size={26} />
+          </div>
+          <h1 className="title--xl">Bagi tagihan tanpa drama</h1>
+          <p className="subtitle" style={{ maxWidth: 420, margin: '0.6rem auto 1.5rem' }}>
+            Minta link kegiatan dari temanmu untuk melihat dan mencatat tagihan, atau buat kegiatan baru dari area
+            admin.
+          </p>
+          <Link to="/admin" className="btn btn--primary btn--lg">
+            Buka Area Admin <ArrowRight size={17} />
+          </Link>
+        </div>
+        <Footer />
+      </>
     );
   }
 
-  if (errorMsg) {
+  if (status === 'loading') {
     return (
-      <div className="card text-center text-danger" style={{ marginTop: '2rem' }}>
-        <h2 className="card-title text-danger">Oops!</h2>
-        <p>{errorMsg}</p>
-      </div>
+      <>
+        <div className="card stack">
+          <Skeleton h={26} w="55%" />
+          <Skeleton h={14} w="35%" />
+        </div>
+        <div className="stats">
+          <Skeleton h={96} r={16} />
+          <Skeleton h={96} r={16} />
+        </div>
+        <div className="split">
+          <Skeleton h={320} r={16} />
+          <Skeleton h={320} r={16} />
+        </div>
+      </>
     );
   }
+
+  if (status === 'error') {
+    return (
+      <>
+        <div className="card center pop">
+          <div className="empty__icon" style={{ color: 'var(--bad-text)' }}>
+            <AlertTriangle size={22} />
+          </div>
+          <h1 className="title">Tidak bisa dibuka</h1>
+          <p className="subtitle" style={{ margin: '0.4rem 0 1.25rem' }}>
+            {errorMsg}
+          </p>
+          <button type="button" className="btn btn--primary" onClick={() => load(undefined)}>
+            <RefreshCw size={16} /> Coba lagi
+          </button>
+        </div>
+        <Footer />
+      </>
+    );
+  }
+
+  const rows = ledger.rows;
+  const shownRows = rows.slice(0, visibleCount);
+  const maxShare = ledger.ranking[0]?.share || 1;
 
   return (
-    <div>
-      <div className="card mb-4 text-center">
-        <h2 className="card-title mb-2" style={{ fontSize: '1.75rem' }}>{activity?.name}</h2>
-        <p className="text-secondary mb-0">Status: <span className={`badge ${activity?.status === 'active' ? 'badge-success' : 'badge-secondary'}`}>{activity?.status === 'active' ? 'Aktif' : 'Selesai'}</span></p>
-        <p className="text-secondary mt-1" style={{ fontSize: '0.875rem' }}>Dibuat pada: {formatDate(activity?.created_at)}</p>
+    <>
+      {/* ── Kepala kegiatan ── */}
+      <div className="card rise" style={{ '--i': 0 }}>
+        <div className="cluster">
+          <div className="grow" style={{ minWidth: 0 }}>
+            <p className="eyebrow">Kegiatan</p>
+            <h1 className="title--xl" style={{ marginTop: '0.1rem' }}>
+              {activity?.name}
+            </h1>
+            <p className="subtitle" style={{ marginTop: '0.3rem' }}>
+              {members.length} anggota · dibuat {formatDate(activity?.created_at)}
+            </p>
+          </div>
+          <div className="stack stack--sm" style={{ alignItems: 'flex-end' }}>
+            <span className={`badge badge--dot ${isActive ? 'badge--ok' : 'badge'}`}>
+              {isActive ? 'Aktif' : 'Selesai'}
+            </span>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => load(undefined, { silent: true })}
+              disabled={isRefreshing}
+            >
+              <RefreshCw size={14} className={isRefreshing ? 'spin' : undefined} />
+              Segarkan
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="summary-cards-container mb-4 mt-4">
-        <div className="card summary-card" style={{ background: 'linear-gradient(135deg, #f79039, #e65c00)', color: 'white', border: 'none', padding: '1.5rem' }}>
-          <h4 style={{ color: 'white', opacity: 0.9 }}>Total Pengeluaran</h4>
-          <div className="amount" style={{ color: 'white' }}>{formatRupiah(totalExpense)}</div>
+      {/* ── Ringkasan ── */}
+      <div className="stats rise" style={{ '--i': 1 }}>
+        <div className="stat stat--brand">
+          <p className="stat__label">Total pengeluaran</p>
+          <AnimatedRupiah value={ledger.total} className="stat__value" />
+          <p className="stat__meta">{rows.length} catatan</p>
         </div>
-        <div className="card summary-card" style={{ background: 'linear-gradient(135deg, #10B981, #059669)', color: 'white', border: 'none', padding: '1.5rem' }}>
-          <h4 style={{ color: 'white', opacity: 0.9 }}>Kontributor Terbanyak</h4>
-          {topContributor ? (
-            <div>
-              <div className="amount" style={{ fontSize: '1.25rem', color: 'white' }}>{topContributor.name}</div>
-              <div style={{ fontSize: '0.875rem', opacity: 0.9, color: 'white' }}>{formatRupiah(topContributor.amount)}</div>
-            </div>
+        <div className="stat stat--ok">
+          <p className="stat__label">Paling banyak nalangi</p>
+          {ledger.topPayer?.paid > 0 ? (
+            <>
+              <p className="stat__value stat__value--sm">{ledger.topPayer.name}</p>
+              <p className="stat__meta">{formatRupiah(ledger.topPayer.paid)}</p>
+            </>
           ) : (
-            <div style={{ opacity: 0.8, color: 'white' }}>Belum ada</div>
+            <p className="stat__value stat__value--sm">Belum ada</p>
           )}
         </div>
       </div>
 
-      <div className="card mb-4 text-center">
-        <p className="mb-3 font-semibold text-secondary" style={{ fontWeight: 600 }}>Ingin melihat rincian belanjamu?</p>
-        <button className="btn btn-secondary" onClick={() => setIsRecapModalOpen(true)}>Klik Disini</button>
-      </div>
-
-      {recapData && (
-        <div className="card mb-4">
-          <div className="recap-header">
-            <h3 className="card-title mb-0">Rekap Belanjaan: {recapData.member.name}</h3>
-            <button className="btn btn-secondary btn-sm" onClick={() => setSelectedRecapMemberId('')}>Tutup</button>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '300px' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                  <th style={{ padding: '0.75rem', fontWeight: 600 }}>Nama Aktivitas</th>
-                  <th style={{ padding: '0.75rem', fontWeight: 600, textAlign: 'right' }}>Biaya</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recapData.items.map((item, idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '0.75rem' }}>{item.name}</td>
-                    <td style={{ padding: '0.75rem', textAlign: 'right' }}>{formatRupiah(item.amount)}</td>
-                  </tr>
-                ))}
-                {recapData.items.length === 0 && (
-                  <tr>
-                    <td colSpan="2" style={{ padding: '1rem', textAlign: 'center', color: 'var(--secondary)' }}>Tidak ada pengeluaran.</td>
-                  </tr>
-                )}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td style={{ padding: '0.75rem', fontWeight: 700 }}>Total</td>
-                  <td style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 700, color: 'var(--danger)' }}>{formatRupiah(recapData.total)}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+      {ledger.warnings.removedMemberRefs > 0 && (
+        <div className="notice notice--warn rise" style={{ '--i': 2 }}>
+          <AlertTriangle size={16} />
+          <span>
+            Ada {ledger.warnings.removedMemberRefs} pengeluaran yang menyebut anggota yang sudah dihapus. Porsinya
+            dibagi ulang ke peserta yang masih ada supaya tagihan tetap seimbang.
+          </span>
         </div>
       )}
 
-      <div className="grid grid-cols-2">
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="card" style={{ flex: 1, border: editingTransactionId ? '2px solid var(--primary)' : '' }}>
-            <h2 className="card-title">
-              {editingTransactionId ? 'Edit Pengeluaran' : 'Catat Pengeluaran Baru'}
-            </h2>
-
-            {/* Mode tabs — only show when not editing */}
-            {!editingTransactionId && (
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', background: 'var(--background)', borderRadius: '8px', padding: '4px' }}>
-                <button
-                  onClick={() => setInputMode('simple')}
-                  style={{
-                    flex: 1, padding: '0.4rem 0.75rem', fontSize: '0.8rem', fontWeight: 600,
-                    borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s',
-                    background: inputMode === 'simple' ? 'var(--primary)' : 'transparent',
-                    color: inputMode === 'simple' ? '#fff' : 'var(--text-muted)'
-                  }}
-                >Bagi Rata</button>
-                <button
-                  onClick={() => setInputMode('advanced')}
-                  style={{
-                    flex: 1, padding: '0.4rem 0.75rem', fontSize: '0.8rem', fontWeight: 600,
-                    borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s',
-                    background: inputMode === 'advanced' ? 'var(--primary)' : 'transparent',
-                    color: inputMode === 'advanced' ? '#fff' : 'var(--text-muted)'
-                  }}
-                >✦ Custom per Orang</button>
-              </div>
+      {/* ── Form + tagihan ── */}
+      <div className="split">
+        <div
+          ref={formRef}
+          className={`card${editingId ? ' card--accent' : ''} rise`}
+          style={{ '--i': 2 }}
+        >
+          <div className="card__head">
+            <div>
+              <h2 className="title">{editingId ? 'Edit pengeluaran' : 'Catat pengeluaran'}</h2>
+              <p className="subtitle">
+                {editingId ? 'Perubahan langsung memengaruhi tagihan.' : 'Satu catatan untuk satu kali bayar.'}
+              </p>
+            </div>
+            {editingId && (
+              <button type="button" className="btn btn--ghost btn--sm" onClick={resetForm}>
+                <X size={15} /> Batal
+              </button>
             )}
-            
-            <div className="form-group">
-              <label className="form-label">Nama Barang / Pengeluaran (Opsional)</label>
-              <input 
-                type="text" 
-                value={itemName} 
+          </div>
+
+          {!editingId && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Segmented options={MODES} value={mode} onChange={setMode} brand label="Cara membagi" />
+            </div>
+          )}
+
+          <div className="stack">
+            <div className="field">
+              <label className="label" htmlFor="item">
+                Untuk apa? <span className="muted">(opsional)</span>
+              </label>
+              <input
+                id="item"
+                className="input"
+                value={itemName}
                 onChange={(e) => setItemName(e.target.value)}
-                className="form-control" 
-                placeholder="Contoh: Tiket Masuk, Makan Siang" 
+                placeholder="Tiket masuk, makan siang, bensin…"
+                disabled={locked}
               />
             </div>
-            
-            <div className="form-group">
-              <label className="form-label">Siapa yang bayar?</label>
-              <select value={paidById} onChange={(e) => setPaidById(e.target.value)} className="form-control">
-                <option value="" disabled>Pilih anggota...</option>
-                {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+
+            <div className="field">
+              <label className="label" htmlFor="payer">
+                Siapa yang bayar?
+              </label>
+              <select
+                id="payer"
+                className="select"
+                value={paidById}
+                onChange={(e) => setPaidById(e.target.value)}
+                disabled={locked}
+              >
+                <option value="">Pilih anggota…</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
               </select>
             </div>
 
-            {/* ── SIMPLE MODE ── */}
-            {(inputMode === 'simple' || editingTransactionId) && (
+            {(mode === 'simple' || editingId) && (
               <>
-                <div className="form-group">
-                  <label className="form-label">Berapa totalnya? (Rp)</label>
-                  <input 
-                    type="number" 
-                    value={amount} 
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="form-control" 
-                    placeholder="0" 
-                  />
+                <div className="field">
+                  <label className="label" htmlFor="amount">
+                    Totalnya berapa?
+                  </label>
+                  <MoneyInput id="amount" value={amount} onChange={setAmount} disabled={locked} />
                 </div>
-                
-                <div className="form-group">
-                  <label className="form-label mb-2">Siapa saja yang ikut patungan?</label>
-                  <div className="mb-2" style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button onClick={selectAllMembers} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>Pilih Semua</button>
-                    <button onClick={clearMembers} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>Bersihkan</button>
+
+                <div className="field">
+                  <div className="cluster">
+                    <label className="label grow">Siapa saja yang ikut?</label>
+                    <span className="badge">
+                      {involved.length}/{members.length}
+                    </span>
                   </div>
-                  <div className="checkbox-grid">
-                    {members.map(m => (
-                      <label key={m.id} className="toggle-switch">
-                        <input 
-                          type="checkbox" 
-                          checked={involvedMemberIds.includes(m.id)} 
-                          onChange={() => toggleMemberInvolved(m.id)}
+                  <div className="cluster">
+                    <button
+                      type="button"
+                      className="btn btn--soft btn--sm"
+                      onClick={() => setInvolved(members.map((m) => m.id))}
+                      disabled={locked}
+                    >
+                      <CheckCheck size={14} /> Semua
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--soft btn--sm"
+                      onClick={() => setInvolved([])}
+                      disabled={locked}
+                    >
+                      <Eraser size={14} /> Bersihkan
+                    </button>
+                  </div>
+                  <div className="people-grid">
+                    {members.map((m) => (
+                      <label key={m.id} className="switch">
+                        <input
+                          type="checkbox"
+                          checked={involved.includes(m.id)}
+                          onChange={() => toggleInvolved(m.id)}
+                          disabled={locked}
                         />
-                        <span className="toggle-slider"></span>
-                        <span className="toggle-label">{m.name}</span>
+                        <span className="switch__track" />
+                        <span className="switch__label">{m.name}</span>
                       </label>
                     ))}
                   </div>
                 </div>
+
+                {preview && (
+                  <div className="summary-line pop">
+                    <span>Per orang</span>
+                    <span className="num">{preview}</span>
+                  </div>
+                )}
               </>
             )}
 
-            {/* ── ADVANCED MODE ── */}
-            {inputMode === 'advanced' && !editingTransactionId && (
-              <div className="form-group">
-                <label className="form-label mb-2">Nominal per orang (Rp)</label>
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem', marginTop: '-0.25rem' }}>
-                  Kosongkan atau isi 0 jika orang tersebut tidak ikut.
+            {mode === 'advanced' && !editingId && (
+              <div className="field">
+                <label className="label">Nominal masing-masing</label>
+                <p className="hint" style={{ marginBottom: '0.25rem' }}>
+                  Kosongkan kalau orangnya tidak ikut. Tiap nominal dicatat atas nama orang tersebut.
                 </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                  {members.map(m => (
-                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <span style={{ flex: '0 0 110px', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>{m.name}</span>
-                      <div style={{ position: 'relative', flex: 1 }}>
-                        <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: 'var(--text-muted)', pointerEvents: 'none' }}>Rp</span>
-                        <input
-                          type="number"
-                          min="0"
-                          value={advancedAmounts[m.id] || ''}
-                          onChange={(e) => setAdvancedAmounts(prev => ({ ...prev, [m.id]: e.target.value }))}
-                          className="form-control"
-                          placeholder="0"
-                          style={{ paddingLeft: '32px' }}
-                        />
-                      </div>
+                <div className="stack stack--sm">
+                  {members.map((m) => (
+                    <div key={m.id} className="amount-row">
+                      <span className="amount-row__name">{m.name}</span>
+                      <MoneyInput
+                        value={perPerson[m.id] ?? 0}
+                        onChange={(v) => setPerPerson((prev) => ({ ...prev, [m.id]: v }))}
+                        disabled={locked}
+                        aria-label={`Nominal untuk ${m.name}`}
+                      />
                     </div>
                   ))}
                 </div>
-                {/* Live total */}
-                {Object.values(advancedAmounts).some(v => Number(v) > 0) && (
-                  <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: 'var(--background)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Total yang dibayar:</span>
-                    <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: '1rem' }}>
-                      {formatRupiah(Object.values(advancedAmounts).reduce((s, v) => s + Number(v || 0), 0))}
-                    </span>
+                {advancedTotal > 0 && (
+                  <div className="summary-line pop" style={{ marginTop: '0.75rem' }}>
+                    <span>{advancedCount} orang</span>
+                    <span className="num">{formatRupiah(advancedTotal)}</span>
                   </div>
                 )}
               </div>
             )}
-            
-            {editingTransactionId ? (
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem' }}>
-                <button onClick={saveEditTransaction} className="btn btn-primary" style={{ flex: 1 }} disabled={isSavingEdit}>
-                  <Save size={20} /> {isSavingEdit ? 'Menyimpan...' : 'Simpan'}
-                </button>
-                <button onClick={cancelEditTransaction} className="btn btn-secondary">Batal</button>
-              </div>
-            ) : (
-              <button
-                onClick={inputMode === 'advanced' ? submitAdvancedTransaction : submitTransaction}
-                className="btn btn-primary btn-block mt-4"
-                disabled={isSubmitting || activity?.status !== 'active'}
-              >
-                <Save size={20} /> {isSubmitting ? 'Menyimpan...' : 'Simpan Pengeluaran'}
-              </button>
-            )}
-            
-            {activity?.status !== 'active' && !editingTransactionId && (
-              <p className="text-danger mt-2" style={{ fontSize: '0.875rem' }}>Kegiatan sudah selesai. Tidak bisa menambah pengeluaran baru.</p>
-            )}
           </div>
+
+          {locked ? (
+            <div className="notice notice--warn" style={{ marginTop: '1.15rem' }}>
+              <AlertTriangle size={16} />
+              <span>Kegiatan sudah selesai, pengeluaran baru tidak bisa ditambahkan.</span>
+            </div>
+          ) : (
+            <div className="cluster" style={{ marginTop: '1.25rem' }}>
+              <button
+                type="button"
+                className="btn btn--primary btn--lg grow"
+                onClick={submit}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <RefreshCw size={17} className="spin" />
+                ) : editingId ? (
+                  <Save size={17} />
+                ) : (
+                  <Plus size={17} />
+                )}
+                {isSaving ? 'Menyimpan…' : editingId ? 'Simpan perubahan' : 'Catat pengeluaran'}
+              </button>
+            </div>
+          )}
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="card" style={{ flex: 1, backgroundColor: 'var(--primary)', color: 'white', border: 'none' }}>
-            <h2 className="card-title" style={{ color: 'white', background: 'none', WebkitTextFillColor: 'initial' }}>Tagihan & Pembayaran</h2>
-            
-            <div className="settlement-summary mb-4 p-4" style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 'var(--radius)' }}>
-              <p className="mb-1" style={{ fontSize: '0.875rem', opacity: 0.9 }}>Total Pengeluaran Kegiatan</p>
-              <h3 style={{ fontSize: '1.75rem', margin: 0 }}>{formatRupiah(totalExpense)}</h3>
+        {/* ── Tagihan ── */}
+        <div className="split__sticky">
+          <div className="card panel--bill rise" style={{ '--i': 3 }}>
+            <div className="card__head">
+              <div>
+                <h2 className="title" style={{ color: '#fff' }}>
+                  Siapa bayar ke siapa
+                </h2>
+                <p style={{ fontSize: '0.82rem', opacity: 0.85 }}>
+                  {ledger.settlement.length === 0
+                    ? 'Belum ada yang perlu ditransfer'
+                    : `${ledger.settlement.length} transfer menuntaskan semuanya`}
+                </p>
+              </div>
+              <Wallet size={20} style={{ opacity: 0.7 }} />
             </div>
-            
-            <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>Siapa Bayar ke Siapa?</h3>
-            
-            {settlement.length === 0 ? (
-              <p style={{ opacity: 0.8 }}>Belum ada tagihan.</p>
+
+            <div className="bill-total">
+              <p style={{ fontSize: '0.75rem', opacity: 0.8, fontWeight: 700, letterSpacing: '0.06em' }}>
+                TOTAL KEGIATAN
+              </p>
+              <AnimatedRupiah value={ledger.total} className="stat__value" />
+            </div>
+
+            {ledger.settlement.length === 0 ? (
+              <div className="settle-row center" style={{ fontSize: '0.875rem', opacity: 0.9 }}>
+                {rows.length === 0 ? 'Catat pengeluaran pertama dulu.' : 'Semua sudah seimbang. 🎉'}
+              </div>
             ) : (
-              <div className="settlement-list">
-                {settlement.map((s, index) => (
-                  <div key={index} className="settlement-item">
-                    <div className="settlement-route">
-                      <strong>{s.from}</strong> <span style={{ opacity: 0.7 }}>bayar ke</span> <strong>{s.to}</strong>
+              <div className="settle">
+                {ledger.settlement.map((t, i) => (
+                  <div key={`${t.fromId}-${t.toId}-${i}`} className="settle-row rise" style={{ '--i': i }}>
+                    <div className="settle-row__head">
+                      <span className="settle-row__who">{t.from}</span>
+                      <ArrowRight size={14} style={{ opacity: 0.75 }} />
+                      <span className="settle-row__who">{t.to}</span>
+                      <span className="settle-row__amount">{formatRupiah(t.amount)}</span>
                     </div>
-                    <div className="settlement-amount">
-                      {formatRupiah(s.amount)}
-                    </div>
-                    {s.bankAccount && (
-                      <div className="settlement-action">
-                        <div className="account-badge">
-                          <span className="badge-orange">{s.bankName || 'Rekening/E-Wallet'}</span>
-                          {s.bankAccount}
-                        </div>
-                        <button onClick={() => copyAccount(s.bankAccount)} className="btn-copy" title="Copy Nomor">
-                          <Copy size={14} />
+                    {t.bankAccount ? (
+                      <div className="settle-row__bank">
+                        <span className="settle-row__account mono">
+                          {t.bankName ? `${t.bankName} · ` : ''}
+                          {t.bankAccount}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-copy"
+                          onClick={() => copyAccount(t.bankAccount)}
+                          aria-label={`Salin rekening ${t.to}`}
+                          title="Salin nomor rekening"
+                        >
+                          <Copy size={13} />
                         </button>
                       </div>
+                    ) : (
+                      <p style={{ fontSize: '0.75rem', opacity: 0.75, marginTop: '0.4rem' }}>
+                        {t.to} belum mengisi nomor rekening.
+                      </p>
                     )}
                   </div>
                 ))}
               </div>
             )}
+
+            <button
+              type="button"
+              className="btn btn--onbrand btn--block"
+              style={{ marginTop: '1rem' }}
+              onClick={() => {
+                setPickerValue(recapId || '');
+                setPickerOpen(true);
+              }}
+              disabled={members.length === 0}
+            >
+              <Receipt size={16} /> Lihat rincian per orang
+            </button>
           </div>
         </div>
       </div>
 
-      <div className="card mt-4">
-        <h2 className="card-title">Daftar Pengeluaran</h2>
-        {transactions.length === 0 ? (
-          <p className="text-secondary">Belum ada pengeluaran dicatat.</p>
-        ) : (
-          <div className="transaction-history">
-            {transactions.map(t => (
-              <div key={t.id} className="transaction-item" style={{ marginBottom: '1rem', padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--background)' }}>
-                <div className="transaction-header">
-                  <div className="transaction-info">
-                    <strong>{getMemberName(t.paid_by_member_id)}</strong> 
-                    <span className="text-secondary"> menalangi </span>
-                    <strong className="text-primary">{formatRupiah(t.amount)}</strong>
-                    <span className="text-secondary"> untuk </span>
-                    <strong>{t.item_name !== '-' ? t.item_name : 'Pengeluaran'}</strong>
-                    
-                    <div className="transaction-date mt-1" style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-                      {formatDate(t.created_at)}
-                    </div>
-                    
-                    <div className="transaction-involved mt-2">
-                      <span className="text-secondary" style={{ fontSize: '0.75rem' }}>Ditanggung oleh: </span>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginTop: '0.25rem' }}>
-                        {typeof t.involved_member_ids === 'string' 
-                          ? t.involved_member_ids.split(',').map((id, idx) => (
-                              <span key={idx} className="badge badge-secondary" style={{ fontSize: '0.7rem' }}>
-                                {getMemberName(id.trim())}
-                              </span>
-                            ))
-                          : (t.involved_member_ids || []).map((id, idx) => (
-                              <span key={idx} className="badge badge-secondary" style={{ fontSize: '0.7rem' }}>
-                                {getMemberName(id)}
-                              </span>
-                            ))
-                        }
-                      </div>
-                    </div>
-                  </div>
-                  {activity?.status === 'active' && (
-                    <div className="transaction-actions" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                      <button onClick={() => startEditTransaction(t)} className="btn btn-secondary btn-sm" style={{ padding: '0.4rem 0.75rem', color: 'var(--primary)' }} title="Edit">
-                        <Edit size={16} /> Edit
-                      </button>
-                      <button onClick={() => deleteTransaction(t.id)} className="btn btn-secondary btn-sm" style={{ padding: '0.4rem 0.75rem', color: 'var(--danger)' }} title="Hapus">
-                        <Trash2 size={16} /> Hapus
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+      {/* ── Riwayat ── */}
+      <div className="card rise" style={{ '--i': 4 }}>
+        <div className="card__head">
+          <div>
+            <h2 className="title">Daftar pengeluaran</h2>
+            <p className="subtitle">{rows.length} catatan, terbaru di atas</p>
           </div>
+        </div>
+
+        {rows.length === 0 ? (
+          <Empty icon={<Receipt size={20} />} title="Belum ada pengeluaran">
+            Catatan pertama akan muncul di sini.
+          </Empty>
+        ) : (
+          <>
+            <div className="rows">
+              {shownRows.map((row, i) => (
+                <div
+                  key={row.id}
+                  className={`tx rise${editingId === row.id ? ' tx--editing' : ''}`}
+                  style={{ '--i': Math.min(i, 6) }}
+                >
+                  <div className="tx__top">
+                    <div className="grow">
+                      <p className="tx__label">{row.label}</p>
+                      <p className="tx__sub">
+                        Ditalangi <strong>{row.payerName}</strong> · {formatDate(row.createdAt)}
+                      </p>
+                    </div>
+                    <span className="tx__amount">{formatRupiah(row.amount)}</span>
+                  </div>
+
+                  <div className="tx__foot">
+                    <div className="chips">
+                      {row.participants.map((p) => (
+                        <span key={p.id} className="chip">
+                          {p.name} · {formatRupiah(p.share)}
+                        </span>
+                      ))}
+                      {row.hasRemovedMembers && (
+                        <span className="chip chip--muted">anggota terhapus diabaikan</span>
+                      )}
+                    </div>
+
+                    {isActive && (
+                      <div className="tx__actions">
+                        <button
+                          type="button"
+                          className="btn btn--soft btn--sm"
+                          onClick={() => startEdit(row)}
+                          aria-label={`Edit ${row.label}`}
+                        >
+                          <Pencil size={14} /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--danger btn--sm"
+                          onClick={() => remove(row)}
+                          aria-label={`Hapus ${row.label}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {rows.length > visibleCount && (
+              <button
+                type="button"
+                className="btn btn--soft btn--block"
+                style={{ marginTop: '0.75rem' }}
+                onClick={() => setVisibleCount((c) => c + VISIBLE_STEP * 2)}
+              >
+                Tampilkan {Math.min(VISIBLE_STEP * 2, rows.length - visibleCount)} lagi
+              </button>
+            )}
+          </>
         )}
       </div>
 
-      {spendersRanking.length > 0 && (
-        <div className="card mb-4">
-          <h3 className="card-title">Ranking Pengeluaran Terbanyak</h3>
-          <p className="text-secondary mb-4" style={{ fontSize: '0.875rem' }}>Urutan anggota berdasarkan total tagihan (pengeluaran).</p>
-          
-          <div className="ranking-list">
-            {spendersRanking.map((spender, index) => (
-              <div key={spender.id} className="ranking-item">
-                <div className="ranking-rank">
-                  {index === 0 ? <span style={{ fontSize: '1.5rem' }} title="Peringkat 1">🥇</span> :
-                   index === 1 ? <span style={{ fontSize: '1.5rem' }} title="Peringkat 2">🥈</span> :
-                   index === 2 ? <span style={{ fontSize: '1.5rem' }} title="Peringkat 3">🥉</span> :
-                   <span className="rank-number">{index + 1}</span>}
-                </div>
-                <div className="ranking-name" style={{ flex: 1, fontWeight: 600 }}>{spender.name}</div>
-                <div className="ranking-amount" style={{ fontWeight: 700, color: 'var(--danger)' }}>{formatRupiah(spender.amount)}</div>
+      {/* ── Peringkat ── */}
+      {ledger.ranking.length > 0 && (
+        <div className="card rise" style={{ '--i': 5 }}>
+          <div className="card__head">
+            <div>
+              <h2 className="title">Porsi terbesar</h2>
+              <p className="subtitle">Berdasarkan total tagihan yang ditanggung</p>
+            </div>
+            <Trophy size={20} className="muted" />
+          </div>
+          <div className="rows">
+            {ledger.ranking.map((p, i) => (
+              <div
+                key={p.id}
+                className="rank-row rise"
+                style={{ '--i': Math.min(i, 6), '--pct': p.share / maxShare }}
+              >
+                <span className="rank-row__bar" aria-hidden="true" />
+                <span className={`rank-row__medal${i < 3 ? ' rank-row__medal--top' : ''}`}>
+                  {['🥇', '🥈', '🥉'][i] ?? i + 1}
+                </span>
+                <span className="grow" style={{ fontWeight: 700 }}>
+                  {p.name}
+                </span>
+                <span className="num" style={{ fontWeight: 800 }}>
+                  {formatRupiah(p.share)}
+                </span>
               </div>
             ))}
           </div>
         </div>
       )}
-      
-      <div className="app-footer">
-        <Link to="/admin" className="admin-link">Area Admin</Link>
-      </div>
 
-      {isRecapModalOpen && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setIsRecapModalOpen(false); }}>
-          <div className="modal-content card" style={{ padding: '2rem' }}>
-            <h3 className="card-title" style={{ marginBottom: '0.5rem' }}>Pilih Anggota</h3>
-            <p className="text-secondary mb-4">Siapa yang ingin dilihat rekap belanjanya?</p>
-            <div className="form-group">
-              <select value={tempRecapMemberId} onChange={(e) => setTempRecapMemberId(e.target.value)} className="form-control">
-                <option value="" disabled>Pilih Anggota</option>
-                {members.map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
-              <button className="btn btn-secondary" onClick={() => setIsRecapModalOpen(false)}>Batal</button>
-              <button className="btn btn-primary" onClick={confirmRecapMember}>Lihat Rekap</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Footer />
+
+      {/* ── Pemilih anggota ── */}
+      <Sheets
+        pickerOpen={pickerOpen}
+        setPickerOpen={setPickerOpen}
+        pickerValue={pickerValue}
+        setPickerValue={setPickerValue}
+        members={members}
+        onConfirm={() => {
+          setRecapId(pickerValue);
+          setPickerOpen(false);
+        }}
+        recap={recap}
+        onCloseRecap={() => setRecapId('')}
+        onDownload={downloadRecap}
+        isExporting={isExporting}
+      />
+    </>
+  );
+}
+
+function Footer() {
+  return (
+    <div className="footer">
+      <Link to="/admin" className="admin-link">
+        Area Admin
+      </Link>
     </div>
+  );
+}
+
+function Sheets({
+  pickerOpen,
+  setPickerOpen,
+  pickerValue,
+  setPickerValue,
+  members,
+  onConfirm,
+  recap,
+  onCloseRecap,
+  onDownload,
+  isExporting,
+}) {
+  return (
+    <>
+      <Sheet
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title="Rincian siapa?"
+        description="Lihat belanjaan dan transfer satu orang."
+        actions={
+          <>
+            <button type="button" className="btn btn--soft" onClick={() => setPickerOpen(false)}>
+              Batal
+            </button>
+            <button type="button" className="btn btn--primary" onClick={onConfirm} disabled={!pickerValue}>
+              Lihat
+            </button>
+          </>
+        }
+      >
+        <div className="field">
+          <label className="label" htmlFor="recap-member">
+            Anggota
+          </label>
+          <select
+            id="recap-member"
+            className="select"
+            value={pickerValue}
+            onChange={(e) => setPickerValue(e.target.value)}
+          >
+            <option value="">Pilih anggota…</option>
+            {members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Sheet>
+
+      <Sheet
+        open={Boolean(recap)}
+        onClose={onCloseRecap}
+        wide
+        title={recap ? `Rincian ${recap.member.name}` : ''}
+        description={
+          recap
+            ? recap.net === 0
+              ? 'Sudah seimbang.'
+              : recap.net < 0
+                ? `Masih kurang bayar ${formatRupiah(-recap.net)}.`
+                : `Kelebihan bayar ${formatRupiah(recap.net)}, akan dikembalikan.`
+            : ''
+        }
+        actions={
+          <>
+            <button type="button" className="btn btn--soft" onClick={onCloseRecap}>
+              Tutup
+            </button>
+            <button type="button" className="btn btn--primary" onClick={onDownload} disabled={isExporting}>
+              {isExporting ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
+              {isExporting ? 'Membuat…' : 'Simpan gambar'}
+            </button>
+          </>
+        }
+      >
+        {recap && (
+          <div className="stack">
+            <div className="scroll-x">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Pengeluaran</th>
+                    <th className="right">Porsi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recap.items.length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="center muted">
+                        Tidak ikut pengeluaran apa pun.
+                      </td>
+                    </tr>
+                  ) : (
+                    recap.items.map((item, i) => (
+                      <tr key={`${item.transactionId}-${i}`}>
+                        <td>{item.label}</td>
+                        <td className="right num">{formatRupiah(item.amount)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td>Total porsi</td>
+                    <td className="right num">{formatRupiah(recap.total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {recap.outgoing.length > 0 && (
+              <div className="stack stack--sm">
+                <p className="eyebrow">Transfer ke</p>
+                {recap.outgoing.map((t, i) => (
+                  <div key={i} className="tx">
+                    <div className="tx__top">
+                      <div className="grow">
+                        <p className="tx__label">{t.to}</p>
+                        <p className="tx__sub mono">
+                          {[t.bankName, t.bankAccount].filter(Boolean).join(' · ') || 'Rekening belum diisi'}
+                        </p>
+                      </div>
+                      <span className="tx__amount">{formatRupiah(t.amount)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {recap.incoming.length > 0 && (
+              <div className="stack stack--sm">
+                <p className="eyebrow">Akan menerima dari</p>
+                {recap.incoming.map((t, i) => (
+                  <div key={i} className="tx">
+                    <div className="tx__top">
+                      <p className="tx__label grow">{t.from}</p>
+                      <span className="tx__amount" style={{ color: 'var(--ok-text)' }}>
+                        {formatRupiah(t.amount)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <p className="hint">
+              <ImageIcon size={12} style={{ verticalAlign: '-2px' }} /> Gambar yang disimpan sudah memuat nomor
+              rekening tujuan, jadi bisa langsung dipakai transfer.
+            </p>
+          </div>
+        )}
+      </Sheet>
+    </>
   );
 }

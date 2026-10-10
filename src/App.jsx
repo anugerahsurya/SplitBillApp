@@ -1,86 +1,86 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
-import { Routes, Route } from 'react-router-dom';
-import { Banknote, Moon, Sun, CheckCircle, AlertCircle } from 'lucide-react';
-import AdminView from './pages/AdminView';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { Link, Route, Routes } from 'react-router-dom';
+import { Moon, Receipt, Sun } from 'lucide-react';
+import { ToastProvider } from './components/Toaster';
+import { ConfirmProvider } from './components/Confirm';
+import { SkeletonCard } from './components/ui';
 import UserView from './pages/UserView';
 
-export const ToastContext = createContext();
+// Halaman admin hanya dipakai sebagian kecil pengunjung, jadi tidak perlu
+// ikut terunduh di muatan pertama.
+const AdminView = lazy(() => import('./pages/AdminView'));
 
-export function useToast() {
-  return useContext(ToastContext);
+const THEME_COLOR = { light: '#ffffff', dark: '#0b1120' };
+
+function useTheme() {
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'light');
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      /* mode privat: tema cukup berlaku untuk sesi ini */
+    }
+    // Warna bar status ikut tema pilihan, bukan tema sistem.
+    document
+      .querySelectorAll('meta[name="theme-color"]')
+      .forEach((m) => m.setAttribute('content', THEME_COLOR[theme]));
+  }, [theme]);
+
+  const toggle = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), []);
+  return [theme, toggle];
 }
 
 export default function App() {
-  const [isDark, setIsDark] = useState(false);
-  const [toasts, setToasts] = useState([]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('theme');
-    if (saved === 'dark') {
-      setIsDark(true);
-      document.documentElement.setAttribute('data-theme', 'dark');
-    }
-  }, []);
-
-  const toggleTheme = () => {
-    setIsDark(!isDark);
-    if (!isDark) {
-      document.documentElement.setAttribute('data-theme', 'dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.removeAttribute('data-theme');
-      localStorage.setItem('theme', 'light');
-    }
-  };
-
-  const showToast = (message, type = 'success') => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3000);
-  };
+  const [theme, toggleTheme] = useTheme();
+  const isDark = theme === 'dark';
 
   return (
-    <ToastContext.Provider value={showToast}>
-      <div className="app-container">
-        <header className="app-header">
-          <div className="header-content">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <Banknote size={32} className="text-primary" />
-              <div>
-                <h1 style={{ margin: 0 }}>SplitBill</h1>
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <p className="header-subtitle" style={{ margin: 0 }}>Bagi tagihan jadi lebih gampang!</p>
-              <button 
-                onClick={toggleTheme} 
-                className="btn btn-secondary" 
-                style={{ padding: '0.5rem', borderRadius: '50%', backgroundColor: 'transparent' }}
+    <ToastProvider>
+      <ConfirmProvider>
+        <div className="shell">
+          <header className="topbar">
+            <div className="topbar__inner">
+              <Link to="/" className="brand" style={{ color: 'inherit' }}>
+                <span className="brand__mark">
+                  <Receipt size={19} strokeWidth={2.4} />
+                </span>
+                <span className="brand__text">
+                  <span className="brand__name">SplitBill</span>
+                  <span className="brand__tag">Bagi tagihan tanpa drama</span>
+                </span>
+              </Link>
+
+              <span className="topbar__spacer" />
+
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="btn btn--ghost btn--icon theme-toggle"
+                aria-label={isDark ? 'Ganti ke tema terang' : 'Ganti ke tema gelap'}
+                title={isDark ? 'Tema terang' : 'Tema gelap'}
               >
-                {isDark ? <Sun size={20} /> : <Moon size={20} />}
+                {isDark ? <Sun size={18} /> : <Moon size={18} />}
               </button>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <main className="main-content">
-          <Routes>
-            <Route path="/" element={<UserView />} />
-            <Route path="/admin" element={<AdminView />} />
-          </Routes>
-        </main>
-
-        <div className="toast-container">
-          {toasts.map((t) => (
-            <div key={t.id} className={`toast toast-${t.type}`}>
-              {t.type === 'success' ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
-              <span>{t.message}</span>
-            </div>
-          ))}
+          <main className="main">
+            <Routes>
+              <Route path="/" element={<UserView />} />
+              <Route
+                path="/admin"
+                element={
+                  <Suspense fallback={<SkeletonCard rows={3} />}>
+                    <AdminView />
+                  </Suspense>
+                }
+              />
+            </Routes>
+          </main>
         </div>
-      </div>
-    </ToastContext.Provider>
+      </ConfirmProvider>
+    </ToastProvider>
   );
 }
