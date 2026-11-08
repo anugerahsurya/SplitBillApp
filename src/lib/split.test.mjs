@@ -1,8 +1,8 @@
 // Uji logika uang tanpa butuh browser: node --test src/lib/split.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildLedger, parseInvolved, recapFor } from './split.js';
-import { parseRupiah, splitEvenly } from './money.js';
+import { activityReportFor, buildLedger, formatActivityReportText, parseInvolved, recapFor } from './split.js';
+import { formatRupiah, parseRupiah, splitEvenly } from './money.js';
 
 const netSum = (l) => l.people.reduce((s, p) => s + p.net, 0);
 const shareSum = (l) => l.people.reduce((s, p) => s + p.share, 0);
@@ -153,4 +153,35 @@ test('rekap per orang konsisten dengan buku besar', () => {
   assert.equal(recap.paid, 0);
   assert.equal(recap.net, -recap.total);
   assert.equal(recapFor(ledger, 'tidak-ada'), null);
+});
+
+test('laporan per kegiatan memuat kontributor, pengeluaran bersama, dan rekap anggota', () => {
+  const members = people(4);
+  const transactions = [
+    { id: 't1', amount: 120000, paid_by_member_id: 'm0', involved_member_ids: 'm0,m1,m2,m3', item_name: 'Villa' },
+    { id: 't2', amount: 40000, paid_by_member_id: 'm1', involved_member_ids: 'm0,m1', item_name: 'Bensin' },
+    { id: 't3', amount: 40000, paid_by_member_id: 'm0', involved_member_ids: 'm0,m1,m2,m3', item_name: 'Kopi' },
+  ];
+  const ledger = buildLedger(members, transactions);
+  const report = activityReportFor(ledger, { name: 'Trip Lembang', status: 'active' });
+
+  assert.equal(report.activityName, 'Trip Lembang');
+  assert.equal(report.total, 200000);
+  assert.equal(report.memberCount, 4);
+  assert.equal(report.transactionCount, 3);
+  assert.equal(report.avgPerMember, 50000);
+  assert.equal(report.contributors.length, 2);
+  assert.equal(report.contributors[0].id, 'm0');
+  assert.equal(report.contributors[0].paid, 160000);
+  assert.equal(report.contributors[0].paidCount, 2);
+  assert.equal(report.contributors[0].paidPct, 80);
+  assert.equal(report.contributors[1].id, 'm1');
+  assert.equal(report.contributors[1].paid, 40000);
+  assert.equal(report.contributors[1].paidPct, 20);
+
+  const text = formatActivityReportText(ledger, { name: 'Trip Lembang' }, formatRupiah);
+  assert.ok(text.includes('Trip Lembang'));
+  assert.ok(text.includes('Kontributor Dana'));
+  assert.ok(text.includes('Villa'));
+  assert.ok(text.includes('Bensin'));
 });

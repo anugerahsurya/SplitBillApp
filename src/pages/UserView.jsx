@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   Eraser,
+  FileSpreadsheet,
   Image as ImageIcon,
   Pencil,
   PieChart,
@@ -21,10 +22,22 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { buildLedger, parseInvolved, recapFor } from '../lib/split.js';
+import {
+  activityReportFor,
+  buildLedger,
+  formatActivityReportText,
+  parseInvolved,
+  recapFor,
+} from '../lib/split.js';
 import { formatDate, formatRupiah, splitEvenly } from '../lib/money.js';
 import { copyText } from '../lib/clipboard.js';
-import { downloadCanvas, renderReceipt, safeFileName, waitForFonts } from '../lib/receipt.js';
+import {
+  downloadCanvas,
+  renderActivityReport,
+  renderReceipt,
+  safeFileName,
+  waitForFonts,
+} from '../lib/receipt.js';
 import { useToast } from '../components/Toaster';
 import { useConfirm } from '../components/Confirm';
 import { Sheet } from '../components/Sheet';
@@ -64,6 +77,7 @@ export default function UserView() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerValue, setPickerValue] = useState('');
   const [recapId, setRecapId] = useState('');
+  const [reportOpen, setReportOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
   const formRef = useRef(null);
@@ -113,6 +127,7 @@ export default function UserView() {
 
   const ledger = useMemo(() => buildLedger(members, transactions), [members, transactions]);
   const recap = useMemo(() => (recapId ? recapFor(ledger, recapId) : null), [ledger, recapId]);
+  const activityReport = useMemo(() => activityReportFor(ledger, activity), [ledger, activity]);
 
   const isActive = activity?.status === 'active';
   const locked = !isActive && !editingId;
@@ -306,6 +321,32 @@ export default function UserView() {
     } finally {
       setIsExporting(false);
     }
+  };
+
+  const downloadActivityReport = async () => {
+    setIsExporting(true);
+    try {
+      await waitForFonts();
+      const canvas = renderActivityReport({
+        activityName: activity?.name,
+        ledger,
+      });
+      await downloadCanvas(canvas, `${safeFileName('laporan_kegiatan', activity?.name)}.png`);
+      toast('Gambar laporan kegiatan tersimpan.');
+    } catch {
+      toast('Gagal membuat gambar laporan.', 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const copyActivityReport = async () => {
+    const text = formatActivityReportText(ledger, activity, formatRupiah);
+    const ok = await copyText(text);
+    toast(
+      ok ? 'Teks laporan kegiatan disalin.' : 'Tidak bisa menyalin otomatis.',
+      ok ? 'success' : 'error',
+    );
   };
 
   // ── Tampilan khusus ──
@@ -674,18 +715,27 @@ export default function UserView() {
               </div>
             )}
 
-            <button
-              type="button"
-              className="btn btn--onbrand btn--block"
-              style={{ marginTop: '1rem' }}
-              onClick={() => {
-                setPickerValue(recapId || '');
-                setPickerOpen(true);
-              }}
-              disabled={members.length === 0}
-            >
-              <Receipt size={16} /> Lihat rincian per orang
-            </button>
+            <div className="stack stack--sm" style={{ marginTop: '1rem' }}>
+              <button
+                type="button"
+                className="btn btn--onbrand btn--block"
+                onClick={() => setReportOpen(true)}
+                disabled={members.length === 0}
+              >
+                <FileSpreadsheet size={16} /> Laporan per kegiatan
+              </button>
+              <button
+                type="button"
+                className="btn btn--onbrand btn--block"
+                onClick={() => {
+                  setPickerValue(recapId || '');
+                  setPickerOpen(true);
+                }}
+                disabled={members.length === 0}
+              >
+                <Receipt size={16} /> Lihat rincian per orang
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -697,6 +747,15 @@ export default function UserView() {
             <h2 className="title">Daftar pengeluaran</h2>
             <p className="subtitle">{rows.length} catatan, terbaru di atas</p>
           </div>
+          {rows.length > 0 && (
+            <button
+              type="button"
+              className="btn btn--soft btn--sm"
+              onClick={() => setReportOpen(true)}
+            >
+              <FileSpreadsheet size={14} /> Laporan bersama
+            </button>
+          )}
         </div>
 
         {rows.length === 0 ? (
@@ -773,9 +832,53 @@ export default function UserView() {
         )}
       </div>
 
+      {/* ── Kontributor Kegiatan ── */}
+      {activityReport.contributors.length > 0 && (
+        <div className="card rise" style={{ '--i': 5 }}>
+          <div className="card__head">
+            <div>
+              <h2 className="title">Kontributor kegiatan</h2>
+              <p className="subtitle">Siapa saja yang sudah menalangi pengeluaran bersama</p>
+            </div>
+            <Wallet size={20} className="muted" />
+          </div>
+          <div className="rows">
+            {activityReport.contributors.map((c, i) => {
+              const maxPaid = activityReport.contributors[0]?.paid || 1;
+              return (
+                <div
+                  key={c.id}
+                  className="rank-row rise"
+                  style={{ '--i': Math.min(i, 6), '--pct': c.paid / maxPaid, flexWrap: 'wrap' }}
+                >
+                  <span className="rank-row__bar" aria-hidden="true" />
+                  <span className={`rank-row__medal${i < 3 ? ' rank-row__medal--top' : ''}`}>
+                    {['🥇', '🥈', '🥉'][i] ?? i + 1}
+                  </span>
+                  <div className="grow" style={{ minWidth: 160 }}>
+                    <div className="cluster" style={{ gap: '0.4rem' }}>
+                      <span style={{ fontWeight: 700 }}>{c.name}</span>
+                      <span className="badge badge--ok">
+                        {c.paidCount}x nalangi · {c.paidPct}%
+                      </span>
+                    </div>
+                    <p className="tx__sub" style={{ marginTop: '0.15rem' }}>
+                      {c.paidItems.map((it) => it.label).join(', ')}
+                    </p>
+                  </div>
+                  <span className="num" style={{ fontWeight: 800 }}>
+                    {formatRupiah(c.paid)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Peringkat ── */}
       {ledger.ranking.length > 0 && (
-        <div className="card rise" style={{ '--i': 5 }}>
+        <div className="card rise" style={{ '--i': 6 }}>
           <div className="card__head">
             <div>
               <h2 className="title">Porsi terbesar</h2>
@@ -808,7 +911,7 @@ export default function UserView() {
 
       <Footer />
 
-      {/* ── Pemilih anggota ── */}
+      {/* ── Pemilih anggota & Laporan kegiatan ── */}
       <Sheets
         pickerOpen={pickerOpen}
         setPickerOpen={setPickerOpen}
@@ -822,6 +925,11 @@ export default function UserView() {
         recap={recap}
         onCloseRecap={() => setRecapId('')}
         onDownload={downloadRecap}
+        reportOpen={reportOpen}
+        setReportOpen={setReportOpen}
+        activityReport={activityReport}
+        onDownloadReport={downloadActivityReport}
+        onCopyReport={copyActivityReport}
         isExporting={isExporting}
       />
     </>
@@ -848,6 +956,11 @@ function Sheets({
   recap,
   onCloseRecap,
   onDownload,
+  reportOpen,
+  setReportOpen,
+  activityReport,
+  onDownloadReport,
+  onCopyReport,
   isExporting,
 }) {
   return (
@@ -987,6 +1100,221 @@ function Sheets({
             <p className="hint">
               <ImageIcon size={12} style={{ verticalAlign: '-2px' }} /> Gambar yang disimpan sudah memuat nomor
               rekening tujuan, jadi bisa langsung dipakai transfer.
+            </p>
+          </div>
+        )}
+      </Sheet>
+
+      <Sheet
+        open={Boolean(reportOpen)}
+        onClose={() => setReportOpen(false)}
+        wide
+        title={`Laporan ${activityReport?.activityName || 'Kegiatan'}`}
+        description={
+          activityReport
+            ? `Pengeluaran bersama · ${activityReport.memberCount} anggota · ${activityReport.transactionCount} catatan`
+            : ''
+        }
+        actions={
+          <>
+            <button type="button" className="btn btn--soft" onClick={onCopyReport}>
+              <Copy size={16} /> Salin teks
+            </button>
+            <button type="button" className="btn btn--primary" onClick={onDownloadReport} disabled={isExporting}>
+              {isExporting ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
+              {isExporting ? 'Membuat…' : 'Simpan PNG'}
+            </button>
+          </>
+        }
+      >
+        {activityReport && (
+          <div className="stack stack--lg">
+            {/* Ringkasan Metrik Kegiatan */}
+            <div className="stats">
+              <div className="stat stat--brand">
+                <p className="stat__label">Total pengeluaran bersama</p>
+                <p className="stat__value num">{formatRupiah(activityReport.total)}</p>
+                <p className="stat__meta">
+                  Rata-rata {formatRupiah(activityReport.avgPerMember)} / orang
+                </p>
+              </div>
+              <div className="stat stat--ok">
+                <p className="stat__label">Kontributor dana</p>
+                <p className="stat__value stat__value--sm">
+                  {activityReport.contributors.length} dari {activityReport.memberCount} anggota
+                </p>
+                <p className="stat__meta">
+                  {activityReport.topPayer
+                    ? `Terbanyak: ${activityReport.topPayer.name} (${formatRupiah(activityReport.topPayer.paid)})`
+                    : 'Belum ada yang menalangi'}
+                </p>
+              </div>
+            </div>
+
+            {/* Kontributor Dana (Siapa yang Nalangi) */}
+            <div className="stack stack--sm">
+              <div className="cluster">
+                <p className="eyebrow grow">Kontributor dana (siapa saja yang nalangi)</p>
+                <span className="badge badge--ok">{activityReport.contributors.length} orang</span>
+              </div>
+              {activityReport.contributors.length === 0 ? (
+                <p className="muted" style={{ fontSize: '0.85rem' }}>
+                  Belum ada anggota yang menalangi pengeluaran.
+                </p>
+              ) : (
+                <div className="rows">
+                  {activityReport.contributors.map((c, i) => {
+                    const maxPaid = activityReport.contributors[0]?.paid || 1;
+                    return (
+                      <div
+                        key={c.id}
+                        className="rank-row"
+                        style={{ '--i': i, '--pct': c.paid / maxPaid, flexWrap: 'wrap' }}
+                      >
+                        <span className="rank-row__bar" aria-hidden="true" />
+                        <span className={`rank-row__medal${i < 3 ? ' rank-row__medal--top' : ''}`}>
+                          {['🥇', '🥈', '🥉'][i] ?? i + 1}
+                        </span>
+                        <div className="grow" style={{ minWidth: 150 }}>
+                          <div className="cluster" style={{ gap: '0.4rem' }}>
+                            <span style={{ fontWeight: 700 }}>{c.name}</span>
+                            <span className="badge badge--ok">
+                              {c.paidCount}x bayar · {c.paidPct}%
+                            </span>
+                          </div>
+                          <p className="tx__sub" style={{ marginTop: '0.15rem' }}>
+                            Menalangi: {c.paidItems.map((it) => it.label).join(', ')}
+                          </p>
+                        </div>
+                        <span className="num" style={{ fontWeight: 800 }}>
+                          {formatRupiah(c.paid)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Daftar Pengeluaran Bersama */}
+            <div className="stack stack--sm">
+              <div className="cluster">
+                <p className="eyebrow grow">Daftar pengeluaran bersama</p>
+                <span className="badge">{activityReport.rows.length} catatan</span>
+              </div>
+              <div className="scroll-x">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Pengeluaran</th>
+                      <th>Dibayar oleh</th>
+                      <th>Peserta ikut</th>
+                      <th className="right">Nominal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activityReport.rows.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="center muted">
+                          Belum ada pengeluaran tercatat.
+                        </td>
+                      </tr>
+                    ) : (
+                      activityReport.rows.map((row) => {
+                        const isAll =
+                          row.participants.length === activityReport.memberCount &&
+                          activityReport.memberCount > 0;
+                        return (
+                          <tr key={row.id}>
+                            <td>
+                              <strong style={{ display: 'block' }}>{row.label}</strong>
+                              <span className="hint">{formatDate(row.createdAt)}</span>
+                            </td>
+                            <td>
+                              <span className="badge badge--brand">{row.payerName}</span>
+                            </td>
+                            <td>
+                              {isAll ? (
+                                <span className="badge badge--ok">
+                                  Semua ({row.participants.length} org)
+                                </span>
+                              ) : (
+                                <span className="hint" style={{ color: 'var(--text-soft)' }}>
+                                  {row.participants.length} org ({row.participants.map((p) => p.name).join(', ')})
+                                </span>
+                              )}
+                            </td>
+                            <td className="right num" style={{ fontWeight: 700 }}>
+                              {formatRupiah(row.amount)}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan={3}>Total pengeluaran bersama</td>
+                      <td className="right num">{formatRupiah(activityReport.total)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            {/* Rekap Semua Anggota */}
+            <div className="stack stack--sm">
+              <p className="eyebrow">Rekap semua anggota (porsi vs nalangi)</p>
+              <div className="scroll-x">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Anggota</th>
+                      <th className="right">Sudah nalangi</th>
+                      <th className="right">Porsi beban</th>
+                      <th className="right">Selisih</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activityReport.memberBalances.map((p) => (
+                      <tr key={p.id}>
+                        <td>
+                          <strong style={{ display: 'block' }}>{p.name}</strong>
+                          <span className="hint">
+                            {p.paid > 0 ? `Kontributor (${p.paidCount}x bayar)` : 'Peserta'} · ikut {p.itemsCount} item
+                          </span>
+                        </td>
+                        <td className="right num">{formatRupiah(p.paid)}</td>
+                        <td className="right num">{formatRupiah(p.share)}</td>
+                        <td
+                          className="right num"
+                          style={{
+                            fontWeight: 700,
+                            color:
+                              p.net === 0
+                                ? 'var(--text-muted)'
+                                : p.net > 0
+                                  ? 'var(--ok-text)'
+                                  : 'var(--bad-text)',
+                          }}
+                        >
+                          {p.net === 0
+                            ? 'Impas'
+                            : p.net > 0
+                              ? `+${formatRupiah(p.net)}`
+                              : `-${formatRupiah(-p.net)}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <p className="hint">
+              <ImageIcon size={12} style={{ verticalAlign: '-2px' }} /> Klik <strong>Simpan PNG</strong> untuk
+              mengunduh gambar laporan kegiatan lengkap (berisi daftar kontributor, pengeluaran bersama, rekap anggota,
+              dan transfer).
             </p>
           </div>
         )}

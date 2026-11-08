@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Copy,
   Download,
+  FileSpreadsheet,
   Layers,
   LayoutList,
   Link2,
@@ -19,12 +20,13 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { buildLedger, recapFor } from '../lib/split.js';
+import { buildLedger, formatActivityReportText, recapFor } from '../lib/split.js';
 import { formatDate, formatRupiah } from '../lib/money.js';
 import { copyText } from '../lib/clipboard.js';
 import {
   canvasToBlob,
   downloadCanvas,
+  renderActivityReport,
   renderReceipt,
   safeFileName,
   stackCanvases,
@@ -324,6 +326,14 @@ export default function AdminView() {
       exportUrls.current.forEach((url) => URL.revokeObjectURL(url));
       exportUrls.current = [];
 
+      const reportCanvas = renderActivityReport({
+        activityName: act.name,
+        ledger,
+      });
+      const reportBlob = await canvasToBlob(reportCanvas);
+      const reportUrl = reportBlob ? URL.createObjectURL(reportBlob) : '';
+      if (reportUrl) exportUrls.current.push(reportUrl);
+
       const sheets = [];
       for (const member of members) {
         const recap = recapFor(ledger, member.id);
@@ -346,7 +356,13 @@ export default function AdminView() {
         sheets.push({ name: member.name, total: recap.total, canvas, url });
       }
 
-      setExportState({ activity: act, sheets, total: ledger.total });
+      setExportState({
+        activity: act,
+        ledger,
+        reportSheet: { canvas: reportCanvas, url: reportUrl },
+        sheets,
+        total: ledger.total,
+      });
     } catch (err) {
       toast(`Gagal menyiapkan export: ${err.message}`, 'error');
     } finally {
@@ -363,6 +379,22 @@ export default function AdminView() {
 
   const downloadOne = (sheet) =>
     downloadCanvas(sheet.canvas, `${safeFileName('rincian', sheet.name, exportState.activity.name)}.png`);
+
+  const downloadActivityPng = () => {
+    if (!exportState?.reportSheet?.canvas) return;
+    downloadCanvas(
+      exportState.reportSheet.canvas,
+      `${safeFileName('laporan_kegiatan', exportState.activity.name)}.png`,
+    );
+    toast('Gambar laporan kegiatan tersimpan.');
+  };
+
+  const copyActivityText = async () => {
+    if (!exportState) return;
+    const text = formatActivityReportText(exportState.ledger, exportState.activity, formatRupiah);
+    const ok = await copyText(text);
+    toast(ok ? 'Teks laporan kegiatan disalin.' : 'Tidak bisa menyalin otomatis.', ok ? 'success' : 'error');
+  };
 
   /** Satu gambar panjang berisi semua orang. Mengunduh belasan file sekaligus
    *  akan diblokir browser setelah file kedua, jadi ini jalan yang aman. */
@@ -802,56 +834,110 @@ export default function AdminView() {
         open={Boolean(exportState)}
         onClose={closeExport}
         wide
-        title="Rincian per anggota"
+        title="Export laporan & rincian"
         description={
           exportState
-            ? `${exportState.sheets.length} gambar dari "${exportState.activity.name}" · total ${formatRupiah(
-                exportState.total,
-              )}`
+            ? `"${exportState.activity.name}" · total bersama ${formatRupiah(exportState.total)}`
             : ''
         }
         actions={
           <>
             <button type="button" className="btn btn--soft" onClick={downloadCombined} disabled={isExporting}>
-              <Layers size={16} /> Jadi 1 gambar
+              <Layers size={16} /> Rincian jadi 1 gambar
             </button>
-            <button type="button" className="btn btn--primary" onClick={downloadEach} disabled={isExporting}>
-              {isExporting ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
-              Unduh semua
+            <button type="button" className="btn btn--primary" onClick={downloadActivityPng} disabled={isExporting}>
+              <FileSpreadsheet size={16} /> Unduh laporan kegiatan
             </button>
           </>
         }
       >
         {exportState && (
-          <>
-            <div className="preview-grid">
-              {exportState.sheets.map((sheet, i) => (
-                <div key={sheet.name + i} className="preview-card pop" style={{ animationDelay: `${i * 35}ms` }}>
-                  {sheet.url && <img src={sheet.url} alt={`Rincian ${sheet.name}`} loading="lazy" />}
+          <div className="stack stack--lg">
+            {/* Laporan Kegiatan (Pengeluaran Bersama & Kontributor) */}
+            {exportState.reportSheet && (
+              <div className="stack stack--sm">
+                <div className="cluster">
+                  <p className="eyebrow grow">Laporan per kegiatan (pengeluaran bersama & kontributor)</p>
+                  <button type="button" className="btn btn--soft btn--sm" onClick={copyActivityText}>
+                    <Copy size={13} /> Salin teks
+                  </button>
+                  <button type="button" className="btn btn--primary btn--sm" onClick={downloadActivityPng}>
+                    <Download size={13} /> Unduh PNG
+                  </button>
+                </div>
+                <div
+                  className="preview-card pop"
+                  style={{ maxWidth: 340, margin: '0 auto' }}
+                >
+                  {exportState.reportSheet.url && (
+                    <img
+                      src={exportState.reportSheet.url}
+                      alt={`Laporan ${exportState.activity.name}`}
+                      loading="lazy"
+                    />
+                  )}
                   <div className="preview-card__foot">
                     <div className="grow" style={{ minWidth: 0 }}>
                       <p className="truncate" style={{ fontSize: '0.8rem', fontWeight: 700 }}>
-                        {sheet.name}
+                        Laporan {exportState.activity.name}
                       </p>
-                      <p className="hint num">{formatRupiah(sheet.total)}</p>
+                      <p className="hint num">Total {formatRupiah(exportState.total)}</p>
                     </div>
                     <button
                       type="button"
                       className="btn btn--soft btn--sm"
-                      onClick={() => downloadOne(sheet)}
-                      aria-label={`Unduh rincian ${sheet.name}`}
+                      onClick={downloadActivityPng}
+                      aria-label="Unduh laporan kegiatan"
                     >
                       <Download size={13} />
                     </button>
                   </div>
                 </div>
-              ))}
+              </div>
+            )}
+
+            {/* Rincian Per Anggota */}
+            <div className="stack stack--sm">
+              <div className="cluster">
+                <p className="eyebrow grow">Rincian per anggota ({exportState.sheets.length} orang)</p>
+                <button
+                  type="button"
+                  className="btn btn--soft btn--sm"
+                  onClick={downloadEach}
+                  disabled={isExporting}
+                >
+                  <Download size={13} /> Unduh satu-satu
+                </button>
+              </div>
+              <div className="preview-grid">
+                {exportState.sheets.map((sheet, i) => (
+                  <div key={sheet.name + i} className="preview-card pop" style={{ animationDelay: `${i * 35}ms` }}>
+                    {sheet.url && <img src={sheet.url} alt={`Rincian ${sheet.name}`} loading="lazy" />}
+                    <div className="preview-card__foot">
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        <p className="truncate" style={{ fontSize: '0.8rem', fontWeight: 700 }}>
+                          {sheet.name}
+                        </p>
+                        <p className="hint num">{formatRupiah(sheet.total)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn--soft btn--sm"
+                        onClick={() => downloadOne(sheet)}
+                        aria-label={`Unduh rincian ${sheet.name}`}
+                      >
+                        <Download size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="hint">
+                Browser memblokir unduhan beruntun setelah file kedua, jadi “Rincian jadi 1 gambar” lebih aman kalau
+                anggotanya banyak.
+              </p>
             </div>
-            <p className="hint" style={{ marginTop: '0.85rem' }}>
-              Browser memblokir unduhan beruntun setelah file kedua, jadi “Jadi 1 gambar” lebih aman kalau anggotanya
-              banyak.
-            </p>
-          </>
+          </div>
         )}
       </Sheet>
     </>

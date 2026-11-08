@@ -263,6 +263,323 @@ export function renderReceipt({
   return canvas;
 }
 
+/**
+ * Gambar satu laporan pengeluaran bersama untuk satu kegiatan utuh:
+ * ringkasan metrik kegiatan, kontributor dana (siapa saja yang nalangi & persentasenya),
+ * daftar seluruh transaksi bersama (siapa bayar & siapa ikut),
+ * rekap saldo semua anggota (nalangi vs porsi), dan daftar penyelesaian transfer.
+ */
+export function renderActivityReport({
+  activityName,
+  ledger,
+  exportedAt = new Date(),
+}) {
+  const measure = document.createElement('canvas').getContext('2d');
+  const labelW = W - PAD * 2 - 150;
+
+  const memberCount = ledger?.people?.length ?? 0;
+  const txRows = ledger?.rows ?? [];
+  const total = ledger?.total ?? 0;
+  const avgPerMember = memberCount > 0 ? Math.round(total / memberCount) : 0;
+
+  const contributors = [...(ledger?.people ?? [])]
+    .filter((p) => p.paid > 0)
+    .sort((a, b) => b.paid - a.paid || (b.paidCount ?? 0) - (a.paidCount ?? 0) || a.name.localeCompare(b.name, 'id'))
+    .map((p) => ({
+      ...p,
+      paidPct: total > 0 ? Math.round((p.paid / total) * 100) : 0,
+    }));
+
+  const memberBalances = [...(ledger?.people ?? [])].sort(
+    (a, b) => b.paid - a.paid || b.share - a.share || a.name.localeCompare(b.name, 'id'),
+  );
+  const transfers = ledger?.settlement ?? [];
+
+  const measuredContributors = contributors.map((c) => {
+    const itemList = (c.paidItems ?? []).map((it) => it.label).join(', ');
+    const count = c.paidCount ?? c.paidItems?.length ?? 1;
+    const subRaw = `${count}x menalangi (${c.paidPct}%)${itemList ? ` · ${itemList}` : ''}`;
+    measure.font = font('500 11px');
+    const subLines = wrapLines(measure, subRaw, labelW, 2);
+    return {
+      ...c,
+      subLines,
+    };
+  });
+
+  const measuredTx = txRows.map((row) => {
+    measure.font = font('600 13px');
+    const titleLines = wrapLines(measure, row.label, labelW, 2);
+
+    const whoText =
+      row.participants.length === memberCount && memberCount > 0
+        ? `Semua (${row.participants.length} org)`
+        : `${row.participants.length} org: ${row.participants.map((p) => p.name).join(', ')}`;
+    const subRaw = `Dibayar ${row.payerName} · Ikut: ${whoText}`;
+    measure.font = font('500 11px');
+    const subLines = wrapLines(measure, subRaw, labelW, 2);
+
+    return {
+      titleLines,
+      subLines,
+      amount: row.amount,
+    };
+  });
+
+  const HEAD_H = 88;
+  const SUM_H = 76;
+  const SEC_H = 34;
+  const TH_H = 36;
+  const ROW_PAD = 11;
+  const TITLE_LH = 17;
+  const SUB_LH = 15;
+
+  const contribHeights = measuredContributors.map(
+    (c) => TITLE_LH + c.subLines.length * SUB_LH + 10 + ROW_PAD * 2,
+  );
+  const contribBodyH = measuredContributors.length
+    ? contribHeights.reduce((a, b) => a + b, 0)
+    : 46;
+
+  const txHeights = measuredTx.map(
+    (r) => r.titleLines.length * TITLE_LH + r.subLines.length * SUB_LH + 4 + ROW_PAD * 2,
+  );
+  const txBodyH = measuredTx.length ? txHeights.reduce((a, b) => a + b, 0) : 46;
+  const TOTAL_H = 46;
+  const MROW_H = 50;
+  const XROW_H = 46;
+  const FOOT_H = 38;
+
+  const contribH = SEC_H + contribBodyH;
+  const membersH = SEC_H + Math.max(memberBalances.length, 1) * MROW_H;
+  const settleH = SEC_H + Math.max(transfers.length, 1) * XROW_H;
+  const H = HEAD_H + SUM_H + contribH + TH_H + txBodyH + TOTAL_H + membersH + settleH + FOOT_H;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(DPR, DPR);
+  ctx.textBaseline = 'alphabetic';
+
+  const box = (x, y, w, h, fill) => {
+    ctx.fillStyle = fill;
+    ctx.fillRect(x, y, w, h);
+  };
+  const rule = (y, color = C.line, x1 = 0, x2 = W, lw = 1) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.moveTo(x1, y + 0.5);
+    ctx.lineTo(x2, y + 0.5);
+    ctx.stroke();
+  };
+  const write = (text, x, y, spec, color, align = 'left') => {
+    ctx.font = font(spec);
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.fillText(text, x, y);
+  };
+
+  box(0, 0, W, H, C.white);
+
+  // ── 1. Kepala ──
+  const header = ctx.createLinearGradient(0, 0, W, HEAD_H);
+  header.addColorStop(0, C.brand);
+  header.addColorStop(1, C.brandDark);
+  ctx.fillStyle = header;
+  ctx.fillRect(0, 0, W, HEAD_H);
+
+  write('SPLITBILL · LAPORAN KEGIATAN', PAD, 26, '700 10px', 'rgba(255,255,255,0.78)');
+  write(activityName || 'Kegiatan', PAD, 50, '800 19px', C.white);
+  write(
+    `Pengeluaran Bersama · ${memberCount} anggota · ${txRows.length} catatan`,
+    PAD,
+    70,
+    '600 12.5px',
+    'rgba(255,255,255,0.92)',
+  );
+
+  const stamp = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium' }).format(exportedAt);
+  write(stamp, W - PAD, 26, '600 11px', 'rgba(255,255,255,0.82)', 'right');
+
+  // ── 2. Ringkasan Kegiatan ──
+  let y = HEAD_H;
+  box(0, y, W, SUM_H, C.brandSoft);
+  rule(y + SUM_H, C.line);
+
+  const cell = W / 3;
+  const summary = [
+    { label: 'TOTAL PENGELUARAN', value: formatRupiah(total), color: C.brandDark },
+    { label: 'RATA-RATA / ORANG', value: formatRupiah(avgPerMember), color: C.ink },
+    {
+      label: 'KONTRIBUTOR DANA',
+      value: `${contributors.length} dari ${memberCount} org`,
+      color: C.ok,
+    },
+  ];
+
+  summary.forEach((s, i) => {
+    const cx = cell * i + cell / 2;
+    write(s.label, cx, y + 28, '700 9px', C.muted, 'center');
+    ctx.font = font('800 15px');
+    const valText = wrapLines(ctx, s.value, cell - 20, 1)[0];
+    write(valText, cx, y + 52, '800 15px', s.color, 'center');
+    if (i > 0) {
+      ctx.strokeStyle = C.line;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cell * i + 0.5, y + 16);
+      ctx.lineTo(cell * i + 0.5, y + SUM_H - 16);
+      ctx.stroke();
+    }
+  });
+  y += SUM_H;
+
+  const section = (title, rightLabel, tone) => {
+    box(0, y, W, SEC_H, tone === 'ok' ? C.okSoft : C.white);
+    write(title, PAD, y + 22, '800 10.5px', tone === 'ok' ? C.ok : C.brandDark);
+    if (rightLabel) {
+      write(rightLabel, W - PAD, y + 22, '700 9.5px', C.muted, 'right');
+    }
+    rule(y + SEC_H, C.line);
+    y += SEC_H;
+  };
+
+  // ── 3. Kontributor Dana (Siapa Saja yang Menalangi) ──
+  section('KONTRIBUTOR DANA (SIAPA YANG NALANGI)', 'TOTAL DITALANGI', 'ok');
+  if (measuredContributors.length === 0) {
+    box(0, y, W, 46, C.white);
+    write('Belum ada kontributor pengeluaran', W / 2, y + 28, '13px', C.muted, 'center');
+    rule(y + 46, C.line);
+    y += 46;
+  } else {
+    const maxPaid = measuredContributors[0]?.paid || 1;
+    measuredContributors.forEach((c, i) => {
+      const h = contribHeights[i];
+      box(0, y, W, h, i % 2 ? C.zebra : C.white);
+
+      write(c.name, PAD, y + ROW_PAD + 13, '700 13px', C.ink);
+      write(formatRupiah(c.paid), W - PAD, y + ROW_PAD + 14, '800 13.5px', C.ok, 'right');
+
+      let curY = y + ROW_PAD + 13 + TITLE_LH;
+      c.subLines.forEach((line) => {
+        write(line, PAD, curY, '500 11px', C.soft);
+        curY += SUB_LH;
+      });
+
+      // Bar proporsi kontribusi
+      const barY = curY - 7;
+      const barW = W - PAD * 2;
+      box(PAD, barY, barW, 4, C.line);
+      box(PAD, barY, Math.max(6, Math.round(barW * (c.paid / maxPaid))), 4, C.ok);
+
+      rule(y + h, C.line);
+      y += h;
+    });
+  }
+
+  // ── 4. Kepala tabel pengeluaran bersama ──
+  box(0, y, W, TH_H, C.white);
+  write('DAFTAR PENGELUARAN BERSAMA', PAD, y + 23, '800 10.5px', C.brandDark);
+  write('NOMINAL', W - PAD, y + 23, '700 9.5px', C.muted, 'right');
+  rule(y + TH_H, C.line);
+
+  // ── 5. Isi daftar pengeluaran ──
+  y += TH_H;
+  if (measuredTx.length === 0) {
+    box(0, y, W, 46, C.white);
+    write('Belum ada pengeluaran tercatat', W / 2, y + 28, '13px', C.muted, 'center');
+    rule(y + 46, C.line);
+    y += 46;
+  } else {
+    measuredTx.forEach((row, i) => {
+      const h = txHeights[i];
+      box(0, y, W, h, i % 2 ? C.zebra : C.white);
+      let curY = y + ROW_PAD + 13;
+      row.titleLines.forEach((line) => {
+        write(line, PAD, curY, '600 13px', C.ink);
+        curY += TITLE_LH;
+      });
+      curY += 2;
+      row.subLines.forEach((line) => {
+        write(line, PAD, curY, '500 11px', C.muted);
+        curY += SUB_LH;
+      });
+      write(formatRupiah(row.amount), W - PAD, y + ROW_PAD + 14, '700 13px', C.ink, 'right');
+      rule(y + h, C.line);
+      y += h;
+    });
+  }
+
+  // ── 6. Total pengeluaran bersama ──
+  box(0, y, W, TOTAL_H, C.brandSoft);
+  rule(y, C.brand, 0, W, 2);
+  write('TOTAL PENGELUARAN BERSAMA', PAD, y + 29, '800 13px', C.brandDark);
+  write(formatRupiah(total), W - PAD, y + 29, '800 16px', C.brandDark, 'right');
+  y += TOTAL_H;
+
+  // ── 7. Rekap semua anggota (Nalangi vs Porsi) ──
+  section('REKAP ANGGOTA (PORSI vs NALANGI)', 'SELISIH SALDO', 'brand');
+  if (memberBalances.length === 0) {
+    box(0, y, W, MROW_H, C.white);
+    write('Belum ada anggota', W / 2, y + 29, '12px', C.muted, 'center');
+    rule(y + MROW_H, C.line);
+    y += MROW_H;
+  } else {
+    memberBalances.forEach((p, i) => {
+      box(0, y, W, MROW_H, i % 2 ? C.zebra : C.white);
+      const roleTag = p.paid > 0 ? `Kontributor (${p.paidCount || 1}x bayar)` : `Peserta (${p.items?.length ?? 0} item)`;
+      write(`${p.name}  ·  ${roleTag}`, PAD, y + 20, '700 12.5px', C.ink);
+      write(
+        `Porsi beban ${formatRupiah(p.share)} · Sudah nalangi ${formatRupiah(p.paid)}`,
+        PAD,
+        y + 38,
+        '500 11px',
+        C.soft,
+      );
+
+      const netStr =
+        p.net === 0
+          ? 'Impas'
+          : p.net > 0
+            ? `+${formatRupiah(p.net)}`
+            : `-${formatRupiah(-p.net)}`;
+      const netColor = p.net === 0 ? C.muted : p.net > 0 ? C.ok : C.bad;
+      write(netStr, W - PAD, y + 29, '800 13px', netColor, 'right');
+      rule(y + MROW_H, C.line);
+      y += MROW_H;
+    });
+  }
+
+  // ── 8. Penyelesaian Transfer ──
+  section('PENYELESAIAN TRANSFER', 'NOMINAL', 'ok');
+  if (transfers.length === 0) {
+    box(0, y, W, XROW_H, C.white);
+    write('Semua sudah seimbang — tidak ada transfer', W / 2, y + 28, '600 12px', C.ok, 'center');
+    rule(y + XROW_H, C.line);
+    y += XROW_H;
+  } else {
+    transfers.forEach((t, i) => {
+      box(0, y, W, XROW_H, i % 2 ? C.zebra : C.white);
+      write(`${t.from}  →  ${t.to}`, PAD, y + 20, '700 13px', C.ink);
+      const bank = [t.bankName, t.bankAccount].filter(Boolean).join(' · ') || 'Rekening belum diisi';
+      ctx.font = font('11px');
+      const bankText = wrapLines(ctx, bank, W - PAD * 2 - 140, 1)[0];
+      write(bankText, PAD, y + 36, '11px', t.bankAccount ? C.soft : C.muted);
+      write(formatRupiah(t.amount), W - PAD, y + 28, '800 14px', C.ok, 'right');
+      rule(y + XROW_H, C.line);
+      y += XROW_H;
+    });
+  }
+
+  // ── 9. Kaki ──
+  box(0, y, W, FOOT_H, C.white);
+  write('Dibuat otomatis oleh SplitBill', W / 2, y + 23, '500 10px', C.muted, 'center');
+
+  return canvas;
+}
+
 /** Tempel beberapa struk jadi satu gambar panjang — satu unduhan, bukan
  *  belasan yang bikin browser memblokir sisanya. */
 export function stackCanvases(canvases, gap = 20) {
